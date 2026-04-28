@@ -1,0 +1,3 @@
+pyserial
+pynput
+pyobjc-framework-Quartz
