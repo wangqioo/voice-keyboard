@@ -2,11 +2,10 @@
 Voice Keyboard Agent —— PC 端后台程序入口。
 
 用法：
-  # 自动搜索 ESP32 串口
-  python -m agent.main
-
-  # 指定串口（测试时用模拟器给的路径）
-  python -m agent.main --port /dev/ttys004
+  python -m agent.main               # 自动搜索 ESP32 串口
+  python -m agent.main --port /dev/ttys004  # 指定串口（测试用）
+  python -m agent.main --install     # 注册开机自启动
+  python -m agent.main --uninstall   # 移除开机自启动
 """
 
 import argparse
@@ -14,6 +13,7 @@ import signal
 import sys
 import time
 
+from agent.autostart import install, uninstall
 from agent.serial_reader import SerialReader
 from agent.typer import type_text, send_shortcut, list_shortcuts
 
@@ -32,8 +32,17 @@ def on_cmd(cmd: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Voice Keyboard Agent")
-    parser.add_argument("--port", default=None, help="指定串口路径，不填则自动搜索 ESP32")
+    parser.add_argument("--port",      default=None,  help="指定串口路径，不填则自动搜索 ESP32")
+    parser.add_argument("--install",   action="store_true", help="注册开机自启动")
+    parser.add_argument("--uninstall", action="store_true", help="移除开机自启动")
     args = parser.parse_args()
+
+    if args.install:
+        install()
+        return
+    if args.uninstall:
+        uninstall()
+        return
 
     print("[agent] Voice Keyboard Agent 启动")
     if args.port:
