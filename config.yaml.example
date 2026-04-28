@@ -1,0 +1,15 @@
+# Voice Keyboard Agent 配置文件
+# 复制为 config.yaml 并填入你的配置（config.yaml 不会被提交到 git）
+
+stt:
+  provider: openai          # 目前支持: openai（后续增加 aliyun）
+  api_key: "sk-..."         # OpenAI API Key，https://platform.openai.com/api-keys
+  model: whisper-1          # OpenAI 语音模型（whisper-1 是当前唯一选项）
+  language: zh              # 识别语言提示: zh（中文）、en（英文）、auto（自动）
+
+audio:
+  device: auto              # auto = 自动搜索 ESP32 UAC 麦克风；也可填设备名称或序号
+  vad_aggressiveness: 2     # VAD 灵敏度 0~3，越高越激进过滤背景噪音（推荐 1~2）
+
+agent:
+  serial_port: auto         # auto = 自动搜索 ESP32 CDC 串口；也可填 /dev/ttyACM0 等

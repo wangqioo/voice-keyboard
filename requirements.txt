@@ -1,3 +1,7 @@
 pyserial
 pynput
+sounddevice
+webrtcvad
+openai
+pyyaml
 pyobjc-framework-Quartz; sys_platform == "darwin"
