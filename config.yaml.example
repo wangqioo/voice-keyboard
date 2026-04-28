@@ -1,15 +1,25 @@
 # Voice Keyboard Agent 配置文件
 # 复制为 config.yaml 并填入你的配置（config.yaml 不会被提交到 git）
+#
+# 快速开始（无需任何硬件）：
+#   1. cp config.yaml.example config.yaml
+#   2. 填写下方 stt.api_key
+#   3. python -m agent.main --no-serial
 
 stt:
   provider: openai          # 目前支持: openai（后续增加 aliyun）
   api_key: "sk-..."         # OpenAI API Key，https://platform.openai.com/api-keys
-  model: whisper-1          # OpenAI 语音模型（whisper-1 是当前唯一选项）
-  language: zh              # 识别语言提示: zh（中文）、en（英文）、auto（自动）
+  model: whisper-1          # 语音模型（whisper-1 是当前唯一选项）
+  language: zh              # 识别语言: zh（中文）、en（英文）、auto（自动）
 
 audio:
-  device: auto              # auto = 自动搜索 ESP32 UAC 麦克风；也可填设备名称或序号
-  vad_aggressiveness: 2     # VAD 灵敏度 0~3，越高越激进过滤背景噪音（推荐 1~2）
+  mode: ptt                 # ptt（按住说话）或 vad（常开，自动检测语音）
+  ptt_key: right_alt        # PTT 热键（pynput Key 名称）
+                            # 常用: right_alt / right_ctrl / right_shift / f9
+  device: auto              # auto = 自动搜索 ESP32 UAC 麦克风，再退回系统默认
+                            # 填设备名称片段（如 "MacBook"）或设备序号（如 2）
+                            # 运行 python -m agent.main --list-devices 查看序号
+  vad_aggressiveness: 2     # VAD 灵敏度 0~3（仅 mode: vad 时生效）
 
-agent:
-  serial_port: auto         # auto = 自动搜索 ESP32 CDC 串口；也可填 /dev/ttyACM0 等
+# agent:
+#   serial_port: auto       # 串口自动搜索；纯软件模式请用 --no-serial 启动

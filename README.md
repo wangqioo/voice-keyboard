@@ -264,18 +264,52 @@ python -m venv .venv
 
 > `pyobjc-framework-Quartz` 是 macOS 专属依赖，Windows / Linux 安装时自动跳过。
 
-### 配置 STT（语音识别）
+### 纯软件模式（无需任何硬件）
 
-复制配置文件模板并填入你的 API Key：
+Agent 支持接管**任何麦克风**——内置麦克风、USB 麦克风、蓝牙耳机——实现语音打字，完全不依赖 ESP32-S3 硬件。
+
+**配置步骤（三步）：**
+
+```bash
+# 1. 复制配置文件
+cp config.yaml.example config.yaml
+
+# 2. 查看可用麦克风（找到你想用的设备序号或名称）
+.venv/bin/python -m agent.main --list-devices
+
+# 3. 编辑 config.yaml，填入 API Key 和设备（留 auto 则用系统默认）
+```
+
+**启动（跳过串口搜索）：**
+
+```bash
+.venv/bin/python -m agent.main --no-serial
+```
+
+**使用方式：**
+
+| 模式 | config.yaml 设置 | 操作 |
+|------|-----------------|------|
+| Push-to-Talk（默认） | `mode: ptt` | 按住右 Alt/Option 说话，松开自动识别 |
+| 常开 VAD | `mode: vad` | 无需操作，自动检测语音边界 |
+
+PTT 模式更适合日常使用：不会被背景声音误触发，适合嘈杂环境。
+
+热键可在 `config.yaml` 中修改（`ptt_key: right_alt` 改成 `right_ctrl`、`f9` 等）。
+
+`config.yaml` 已加入 `.gitignore`，不会被提交到 git（内含 API Key）。
+
+---
+
+### 配置 STT API Key
 
 ```bash
 cp config.yaml.example config.yaml
-# 用任意编辑器打开 config.yaml，填写 stt.api_key
+# 编辑 config.yaml → stt.api_key 填入 OpenAI API Key
+# 获取：https://platform.openai.com/api-keys
 ```
 
-`config.yaml` 已加入 `.gitignore`，不会被提交到 git。
-
-如果暂时没有 API Key，Agent 仍可正常启动，只是跳过音频 STT，串口快捷键和 CDC 文字输入照常工作。
+如果暂时没有 API Key，Agent 仍可正常启动，跳过音频 STT，串口快捷键照常工作。
 
 ---
 
