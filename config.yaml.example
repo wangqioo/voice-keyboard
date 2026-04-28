@@ -42,6 +42,9 @@ stt:
 # 音频设置
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 audio:
+  # 推荐：
+  #   购买了 Voice Keyboard 硬件 → mode: vad（全程免手动，开口即唤醒）
+  #   使用普通麦克风 / 内置麦克风 → mode: ptt（按住说话，避免背景噪音误触发）
   mode: ptt                 # ptt（按住说话）或 vad（常开，自动检测语音）
   ptt_key: right_alt        # PTT 热键（right_alt / right_ctrl / right_shift / f9 等）
   device: auto              # auto = 自动查找 ESP32 UAC 麦克风，找不到用系统默认
