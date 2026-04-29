@@ -1,9 +1,10 @@
 pyserial
 pynput
 sounddevice
-# webrtcvad 在 Windows 需要预编译版本（原版需要 MSVC 编译环境）
-webrtcvad-wheels; sys_platform == "win32"
-webrtcvad; sys_platform != "win32"
+# webrtcvad 仅 VAD 模式需要，PTT 模式无需安装
+# Python 3.12 及以下可直接安装：pip install webrtcvad
+# Python 3.13+：目前 webrtcvad 暂无预编译包，请使用 PTT 模式（audio.mode: ptt）
+# webrtcvad
 openai
 requests
 pyyaml

@@ -10,7 +10,12 @@ import time
 from typing import Callable, Optional
 
 import sounddevice as sd
-import webrtcvad
+
+# webrtcvad 仅在 VAD 模式下需要，懒加载避免 PTT 模式因缺包报错
+try:
+    import webrtcvad as _webrtcvad
+except ImportError:
+    _webrtcvad = None
 
 SAMPLE_RATE   = 16000
 FRAME_MS      = 30                                  # webrtcvad 支持 10/20/30ms
@@ -57,9 +62,14 @@ class AudioMonitor:
         device: Optional[str] = "auto",
         vad_level: int = 2,
     ):
+        if _webrtcvad is None:
+            raise ImportError(
+                "VAD 模式需要 webrtcvad。Python 3.12 及以下：pip install webrtcvad\n"
+                "若编译失败，请改用 PTT 模式（config.yaml: audio.mode: ptt）"
+            )
         self._on_utterance = on_utterance
         self._device_hint  = device
-        self._vad          = webrtcvad.Vad(vad_level)
+        self._vad          = _webrtcvad.Vad(vad_level)
         self._thread: Optional[threading.Thread] = None
         self._stop         = threading.Event()
         self._paused       = threading.Event()  # set = 暂停 VAD
