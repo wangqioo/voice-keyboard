@@ -146,13 +146,13 @@ def _type_via_sendinput(text: str) -> None:
 def _type_via_clipboard_win(text: str) -> None:
     # Windows 剪贴板粘贴模式：适合微信等拦截 SendInput 的应用
     _set_clipboard_win(text)
-    time.sleep(0.05)
+    time.sleep(0.03)
     _kb.press(Key.ctrl)
     try:
         _press_key(KeyCode.from_char("v"))
     finally:
         _kb.release(Key.ctrl)
-    time.sleep(0.05)
+    time.sleep(0.03)
 
 
 def _type_via_xtest(text: str) -> None:

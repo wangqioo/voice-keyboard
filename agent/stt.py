@@ -380,7 +380,7 @@ class _XunfeiSTT:
                             "dwa":      "wpgs",
                         }
                     ws.send(json.dumps(frame))
-                    time.sleep(0.04)
+                    time.sleep(0.005)  # PTT 音频已录完，无需按实时速率发包
                 if n == 1:
                     # 单块时补发一个空的 status=2 关闭帧
                     ws.send(json.dumps({"data": {
