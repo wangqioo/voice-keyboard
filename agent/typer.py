@@ -32,7 +32,18 @@ if _OS == "Windows":
             ("padding", ctypes.c_ubyte * 8),
         ]
 
-    _user32 = ctypes.windll.user32
+    _user32   = ctypes.windll.user32
+    _kernel32 = ctypes.windll.kernel32
+    _kernel32.GlobalAlloc.restype    = ctypes.c_void_p
+    _kernel32.GlobalAlloc.argtypes   = [ctypes.c_uint, ctypes.c_size_t]
+    _kernel32.GlobalLock.restype     = ctypes.c_void_p
+    _kernel32.GlobalLock.argtypes    = [ctypes.c_void_p]
+    _kernel32.GlobalUnlock.restype   = ctypes.c_bool
+    _kernel32.GlobalUnlock.argtypes  = [ctypes.c_void_p]
+    _user32.SetClipboardData.restype  = ctypes.c_void_p
+    _user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+    _user32.GetClipboardData.restype  = ctypes.c_void_p
+    _user32.GetClipboardData.argtypes = [ctypes.c_uint]
 
 # ── erase_last 的「正在擦除」标志 ─────────────────────────────────
 # keyboard_monitor 通过 is_erasing() 判断当前退格是否由我们发出，
@@ -40,6 +51,15 @@ if _OS == "Windows":
 # CPython GIL 保证单字节赋值是原子的，线程安全。
 
 _erasing: bool = False
+_use_clipboard_mode: bool = False
+
+
+def init(cfg: dict) -> None:
+    """由 main.py 在启动时调用，根据 config.yaml 的 typing.method 配置打字方式。"""
+    global _use_clipboard_mode
+    _use_clipboard_mode = cfg.get("method", "unicode") == "clip"
+    if _use_clipboard_mode:
+        print("[typer] 剪贴板粘贴模式（适合微信等应用）")
 
 
 def is_erasing() -> bool:
@@ -77,13 +97,16 @@ if _OS == "Windows":
 # ── 打字 ──────────────────────────────────────────────────────────
 
 def type_text(text: str) -> None:
-    """在当前焦点输入框逐字打出任意 Unicode 文字（含汉字）"""
+    """在当前焦点输入框打出任意 Unicode 文字（含汉字）"""
     if not text:
         return
     if _OS == "Darwin":
         _type_via_quartz(text)
     elif _OS == "Windows":
-        _type_via_sendinput(text)
+        if _use_clipboard_mode:
+            _type_via_clipboard_win(text)
+        else:
+            _type_via_sendinput(text)
     else:
         _type_via_xtest(text)  # Linux
 
@@ -118,6 +141,18 @@ def _type_via_sendinput(text: str) -> None:
                 )
                 _user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
         time.sleep(0.012)
+
+
+def _type_via_clipboard_win(text: str) -> None:
+    # Windows 剪贴板粘贴模式：适合微信等拦截 SendInput 的应用
+    _set_clipboard_win(text)
+    time.sleep(0.05)
+    _kb.press(Key.ctrl)
+    try:
+        _press_key(KeyCode.from_char("v"))
+    finally:
+        _kb.release(Key.ctrl)
+    time.sleep(0.05)
 
 
 def _type_via_xtest(text: str) -> None:
@@ -309,9 +344,9 @@ def _get_clipboard_win() -> str:
         h = _user32.GetClipboardData(CF_UNICODETEXT)
         if not h:
             return ""
-        ptr = ctypes.windll.kernel32.GlobalLock(h)
+        ptr = _kernel32.GlobalLock(h)
         text = ctypes.wstring_at(ptr) if ptr else ""
-        ctypes.windll.kernel32.GlobalUnlock(h)
+        _kernel32.GlobalUnlock(h)
         return text
     except Exception:
         return ""
@@ -327,15 +362,19 @@ def _set_clipboard_win(text: str) -> None:
     GHND           = 0x0042
     try:
         data = text.encode("utf-16-le") + b"\x00\x00"
-        h    = ctypes.windll.kernel32.GlobalAlloc(GHND, len(data))
-        ptr  = ctypes.windll.kernel32.GlobalLock(h)
+        h    = _kernel32.GlobalAlloc(GHND, len(data))
+        if not h:
+            raise RuntimeError("GlobalAlloc 失败")
+        ptr  = _kernel32.GlobalLock(h)
+        if not ptr:
+            raise RuntimeError("GlobalLock 失败")
         ctypes.memmove(ptr, data, len(data))
-        ctypes.windll.kernel32.GlobalUnlock(h)
+        _kernel32.GlobalUnlock(h)
         _user32.OpenClipboard(0)
         _user32.EmptyClipboard()
         _user32.SetClipboardData(CF_UNICODETEXT, h)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[typer] 剪贴板写入失败: {e}")
     finally:
         try:
             _user32.CloseClipboard()

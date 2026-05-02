@@ -19,6 +19,7 @@ STT（语音转文字）客户端，支持多家云服务。
 
 import base64
 import io
+import json
 import time
 import uuid
 import wave
@@ -146,8 +147,15 @@ class _VolcengineSTT:
         self._language = cfg.get("language", "zh-CN")
 
     def transcribe(self, pcm: bytes) -> str:
-        wav      = _pcm_to_wav(pcm)
+        import struct, tempfile, os
+        samples = struct.unpack(f'{len(pcm)//2}h', pcm)
+        print(f"[stt] PCM {len(pcm)}B, 时长{len(pcm)/16000/2:.2f}s, 幅度 min={min(samples)} max={max(samples)}")
+        wav = _pcm_to_wav(pcm)
+        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        tmp.write(wav); tmp.close()
+        print(f"[stt] WAV 已保存至 {tmp.name}（可用播放器验证）")
         audio_b64 = base64.b64encode(wav).decode()
+        print(f"[stt] base64 长度: {len(audio_b64)}")
 
         payload = {
             "app": {
@@ -157,12 +165,11 @@ class _VolcengineSTT:
             },
             "user":  {"uid": "voice-keyboard"},
             "audio": {
-                "format":   "wav",
-                "rate":     SAMPLE_RATE,
-                "language": self._language,
-                "bits":     16,
-                "channel":  1,
-                "codec":    "raw",
+                "format":  "wav",
+                "rate":    SAMPLE_RATE,
+                "bits":    16,
+                "channel": 1,
+                "codec":   "raw",
             },
             "request": {
                 "reqid":          str(uuid.uuid4()),
@@ -175,19 +182,50 @@ class _VolcengineSTT:
         }
         resp = requests.post(
             self._ASR_URL,
-            json=payload,
+            data=json.dumps(payload),
             headers={
                 "Authorization": f"Bearer; {self._token}",
-                "Content-Type":  "application/json",
             },
             timeout=15,
         )
+        if not resp.ok:
+            raise RuntimeError(f"火山引擎 ASR HTTP {resp.status_code}: {resp.text}")
         resp.raise_for_status()
         result = resp.json()
         if result.get("code") == 1000:
             utterances = result.get("utterances") or []
             return "".join(u.get("text", "") for u in utterances).strip()
         raise RuntimeError(f"火山引擎 ASR 错误: {result.get('message', result)}")
+
+
+# ── GLM 前缀清理 ─────────────────────────────────────────────────
+
+_GLM_PREAMBLE_STARTS = (
+    "好的", "明白", "收到", "当然", "没问题", "知道了", "了解", "好！", "好，",
+)
+
+def _strip_glm_preamble(text: str) -> str:
+    """去掉 GLM-4-Voice 可能在转写结果前加的对话性前缀。
+
+    两种情形：
+      1. 冒号型：前 25 字内出现「：」→ 截取冒号后内容
+         例："好的，请听逐字转录：明天九点出发"
+      2. 句末型：以常见客套词开头且第一句较短 → 截取第一个句末标点后内容
+         例："好的，我会记录的。明天早上10点出发去高铁站。"
+    """
+    if not text:
+        return text
+    # 情形1：冒号
+    colon_pos = text.find("：")
+    if 0 < colon_pos < 25:
+        return text[colon_pos + 1:].strip()
+    # 情形2：句末标点
+    if any(text.startswith(s) for s in _GLM_PREAMBLE_STARTS):
+        import re
+        m = re.search(r'[。！？]', text)
+        if m and m.end() < len(text):
+            return text[m.end():].strip()
+    return text
 
 
 # ── 智谱 AI GLM-4-Voice ───────────────────────────────────────────
@@ -215,8 +253,12 @@ class _ZhipuSTT:
     模型直接返回转写文字。
     """
 
-    _PROMPT_ZH = "请将这段音频转录为文字。只输出转录结果，不要添加任何解释、标点说明或前缀。"
-    _PROMPT_EN = "Transcribe this audio. Output only the transcription, no explanations."
+    _PROMPT_ZH = (
+        "把这段录音里说的话抄写下来。"
+        "只写说话内容本身，不要加任何开头语，不要加冒号，不要任何引导语或说明。"
+        "数字用阿拉伯数字（如7、10、100）。"
+    )
+    _PROMPT_EN = "Write down exactly what is said in this audio. Output only the spoken words, no intro, no colon, no explanation."
 
     def __init__(self, cfg: dict):
         try:
@@ -254,7 +296,139 @@ class _ZhipuSTT:
                 ],
             }],
         )
-        return resp.choices[0].message.content.strip()
+        result = resp.choices[0].message.content.strip()
+        result = _strip_glm_preamble(result)
+        return result
+
+
+# ── 科大讯飞语音听写（流式 WebSocket）────────────────────────────
+
+class _XunfeiSTT:
+    """
+    科大讯飞语音听写（流式版）WebSocket API。
+
+    所需配置：
+      app_id     讯飞应用 APPID
+      api_key    讯飞 APIKey
+      api_secret 讯飞 APISecret
+      language   语言，默认 zh_cn
+
+    需要安装：pip install websocket-client
+    """
+
+    _HOST = "iat-api.xfyun.cn"
+    _PATH = "/v2/iat"
+
+    def __init__(self, cfg: dict):
+        try:
+            import websocket as _ws
+            self._ws = _ws
+        except ImportError:
+            raise ImportError("使用 xunfei provider 需要安装：pip install websocket-client")
+        self._app_id     = cfg["app_id"]
+        self._api_key    = cfg["api_key"]
+        self._api_secret = cfg["api_secret"]
+        self._language   = cfg.get("language", "zh_cn")
+
+    def _build_url(self) -> str:
+        import hashlib, hmac as _hmac
+        from datetime import datetime, timezone
+        from urllib.parse import urlencode
+
+        date = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
+        sig_origin = f"host: {self._HOST}\ndate: {date}\nGET {self._PATH} HTTP/1.1"
+        sig = base64.b64encode(
+            _hmac.new(self._api_secret.encode(), sig_origin.encode(), hashlib.sha256).digest()
+        ).decode()
+        auth = base64.b64encode(
+            f'api_key="{self._api_key}", algorithm="hmac-sha256", '
+            f'headers="host date request-line", signature="{sig}"'.encode()
+        ).decode()
+        return f"wss://{self._HOST}{self._PATH}?" + urlencode({
+            "authorization": auth, "date": date, "host": self._HOST,
+        })
+
+    def transcribe(self, pcm: bytes) -> str:
+        import threading
+
+        CHUNK  = 1280  # 40ms @ 16kHz 16bit mono
+        chunks = [pcm[i:i + CHUNK] for i in range(0, len(pcm), CHUNK)]
+        segments: dict[int, str] = {}
+        err     = [None]
+        done    = threading.Event()
+
+        def on_open(ws):
+            def _send():
+                n = len(chunks)
+                for idx, chunk in enumerate(chunks):
+                    status = 0 if idx == 0 else (2 if idx == n - 1 else 1)
+                    # 单块音频：status=2 仍须携带 common/business
+                    frame: dict = {"data": {
+                        "status":   status,
+                        "format":   "audio/L16;rate=16000",
+                        "encoding": "raw",
+                        "audio":    base64.b64encode(chunk).decode(),
+                    }}
+                    if idx == 0:
+                        frame["common"]   = {"app_id": self._app_id}
+                        frame["business"] = {
+                            "language": self._language,
+                            "domain":   "iat",
+                            "accent":   "mandarin",
+                            "ptt":      1,
+                            "nunum":    1,
+                            "dwa":      "wpgs",
+                        }
+                    ws.send(json.dumps(frame))
+                    time.sleep(0.04)
+                if n == 1:
+                    # 单块时补发一个空的 status=2 关闭帧
+                    ws.send(json.dumps({"data": {
+                        "status": 2, "format": "audio/L16;rate=16000",
+                        "encoding": "raw", "audio": "",
+                    }}))
+            threading.Thread(target=_send, daemon=True).start()
+
+        def on_message(ws, msg):
+            data   = json.loads(msg)
+            code   = data.get("code", -1)
+            if code != 0:
+                err[0] = f"讯飞 code={code}: {data.get('message', '')}"
+                ws.close(); return
+            body   = data.get("data", {})
+            result = body.get("result", {})
+            pgs    = result.get("pgs", "apd")
+            rg     = result.get("rg", [])
+            sn     = result.get("sn", 0)
+            text   = "".join(
+                cw.get("w", "")
+                for w in result.get("ws", [])
+                for cw in w.get("cw", [])
+            )
+            if pgs == "rpl" and len(rg) >= 2:
+                for i in range(rg[0], rg[1] + 1):
+                    segments.pop(i, None)
+            segments[sn] = text
+            if body.get("status") == 2:
+                ws.close(); done.set()
+
+        def on_error(ws, e):
+            err[0] = str(e); done.set()
+
+        def on_close(ws, *_):
+            done.set()
+
+        app = self._ws.WebSocketApp(
+            self._build_url(),
+            on_open=on_open, on_message=on_message,
+            on_error=on_error, on_close=on_close,
+        )
+        threading.Thread(target=app.run_forever, daemon=True).start()
+        done.wait(timeout=15)
+
+        if err[0]:
+            raise RuntimeError(err[0])
+        return "".join(segments[k] for k in sorted(segments)).strip()
 
 
 # ── 统一入口 ──────────────────────────────────────────────────────
@@ -267,6 +441,7 @@ _PROVIDERS: dict[str, type] = {
     "aliyun":     _AliyunSTT,
     "volcengine": _VolcengineSTT,
     "zhipuai":    _ZhipuSTT,
+    "xunfei":     _XunfeiSTT,
 }
 
 

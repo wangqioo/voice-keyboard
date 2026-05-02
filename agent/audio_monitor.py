@@ -28,8 +28,10 @@ SILENCE_FRAMES = 12
 MIN_SPEECH_FRAMES = 4
 
 
-def find_device(hint: Optional[str]) -> Optional[int]:
+def find_device(hint) -> Optional[int]:
     """按名称片段查找输入设备，找不到返回 None（使用系统默认）。"""
+    if isinstance(hint, int):
+        return hint
     if hint and hint != "auto":
         # 用户直接指定设备序号
         if hint.isdigit():

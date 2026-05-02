@@ -20,7 +20,7 @@ from agent.autostart import install, uninstall
 from agent.config import load as load_config
 from agent.serial_reader import SerialReader
 from agent.text_buffer import TextBuffer
-from agent.typer import erase_last, get_current_line, list_shortcuts, replace_current_line, send_shortcut, type_text
+from agent.typer import erase_last, get_current_line, init as typer_init, list_shortcuts, replace_current_line, send_shortcut, type_text
 
 
 # ── 串口回调 ───────────────────────────────────────────────────────
@@ -146,7 +146,9 @@ def make_edit_handler(stt_client, editor, buf: TextBuffer, vad_monitor=None):
 
 def _build_audio(cfg: dict, buf: TextBuffer, kbd_monitor=None):
     stt_cfg = cfg.get("stt", {})
-    if not stt_cfg.get("api_key"):
+    provider = stt_cfg.get("provider", "")
+    _no_api_key_providers = {"volcengine", "aliyun"}
+    if not stt_cfg.get("api_key") and provider not in _no_api_key_providers:
         print("[agent] 未配置 stt.api_key，跳过音频 STT")
         print("[agent] 提示: cp config.yaml.example config.yaml 然后填入 API Key")
         return None
@@ -284,6 +286,7 @@ def main():
         return
 
     cfg = load_config()
+    typer_init(cfg.get("typing", {}))
     buf = TextBuffer()
     print("[agent] Voice Keyboard Agent 启动")
 

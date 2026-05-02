@@ -16,3 +16,6 @@ zhipuai
 
 # .env 文件支持（可选，未安装时 config.py 内置简易解析作为回退）
 python-dotenv
+
+# 讯飞语音听写（xunfei provider）
+websocket-client
