@@ -211,6 +211,11 @@ stt:
 - [x] 行选择纠错（Home→Shift+End→剪贴板）：鼠标乱点后仍能准确拿到当前行原文
 - [x] .env 文件配置支持（与 python-dotenv 兼容）
 
+### 性能优化
+
+- **讯飞发包间隔**：PTT 录音结束后音频已完整，发包间隔从 40ms 压缩至 5ms，3 秒录音节省约 2.6 秒等待
+- **剪贴板粘贴延迟**：粘贴前后等待时间从各 50ms 压缩至 30ms，每次打字节省 40ms
+
 ### 已知 Bug 修复（Windows 调试记录）
 
 - **`audio_monitor.py`**：`find_device()` 不支持整数 hint（YAML `device: 1` 解析为 int），已修复
