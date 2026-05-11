@@ -10,6 +10,7 @@ Voice Keyboard Agent —— PC 端后台程序入口。
 """
 
 import argparse
+import ctypes
 import os
 import signal
 import sys
@@ -50,10 +51,31 @@ import sounddevice as sd
 
 from agent.autostart import install, uninstall
 from agent.config import load as load_config
+from agent.cloud_client import CloudClient
 from agent.history import History
+from agent.local_quota import QuotaManager, QuotaError
 from agent.serial_reader import SerialReader
 from agent.text_buffer import TextBuffer
 from agent.typer import init as typer_init, list_shortcuts, send_shortcut, type_text
+
+
+# ── 管理员提权（Windows 键盘钩子最高优先级）──────────────────────────
+
+def _is_admin() -> bool:
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+def _relaunch_as_admin() -> None:
+    """以管理员身份重启进程，使 WH_KEYBOARD_LL 钩子优先级高于所有普通用户程序。"""
+    if _is_admin():
+        return
+    params = " ".join(f'"{a}"' for a in sys.argv)
+    ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+    if ret > 32:
+        sys.exit(0)
+    print("[agent] 用户取消了管理员授权，热键优先级可能受其他程序影响")
 
 
 # ── 串口回调 ───────────────────────────────────────────────────────
@@ -91,9 +113,19 @@ _POLISH_SYSTEM = """你是文字润色助手。对用户说的话做最轻度的
 
 
 def make_utterance_handler(stt_client, buf: TextBuffer, kbd_mon=None, editor=None,
-                           status_window=None, history: History | None = None):
+                           status_window=None, history: History | None = None,
+                           quota: QuotaManager = None):
     def on_utterance(pcm: bytes, polish: bool = False):
         mode = "polish" if polish else "dictate"
+        duration_seconds = len(pcm) / (16000 * 2)
+
+        # ── 本地额度检查 ──
+        if quota:
+            can, reason = quota.can_stt(duration_seconds)
+            if not can:
+                print(f"[quota] STT 拒绝: {reason}")
+                return
+
         try:
             text = stt_client.transcribe(pcm)
         except Exception as e:
@@ -129,6 +161,12 @@ def make_utterance_handler(stt_client, buf: TextBuffer, kbd_mon=None, editor=Non
             if history is not None:
                 history.append(mode, text, "error", f"typing: {e}")
             return
+
+        # ── 本地额度扣减 ──
+        if quota:
+            quota.deduct_stt(duration_seconds)
+            quota.sync_to_cloud()
+
         if history is not None:
             history.append(mode, text, "ok")
         if kbd_mon is not None:
@@ -161,7 +199,8 @@ class _Backend:
             setattr(self, attr, None)
 
 
-def build_backend(args, buf: TextBuffer, status_window, history: History) -> _Backend:
+def build_backend(args, buf: TextBuffer, status_window, history: History,
+                  quota: QuotaManager = None) -> _Backend:
     bk = _Backend()
     bk.cfg = load_config()
     typer_init(bk.cfg.get("typing", {}))
@@ -188,12 +227,13 @@ def build_backend(args, buf: TextBuffer, status_window, history: History) -> _Ba
         print("[agent] 串口已禁用（纯软件模式）")
 
     bk.audio = _build_audio(bk.cfg, buf, kbd_monitor=bk.kbd_monitor,
-                            status_window=status_window, history=history)
+                            status_window=status_window, history=history,
+                            quota=quota)
     return bk
 
 
 def _build_audio(cfg: dict, buf: TextBuffer, kbd_monitor=None, status_window=None,
-                 history: History | None = None):
+                 history: History | None = None, quota: QuotaManager = None):
     stt_cfg = cfg.get("stt", {})
     provider = stt_cfg.get("provider", "")
     _no_api_key_providers = {"volcengine", "aliyun"}
@@ -247,7 +287,8 @@ def _build_audio(cfg: dict, buf: TextBuffer, kbd_monitor=None, status_window=Non
             print(f"[agent] AIHandler 初始化失败: {e}")
 
     on_utterance = make_utterance_handler(stt, buf, kbd_mon=kbd_monitor, editor=editor,
-                                          status_window=status_window, history=history)
+                                          status_window=status_window, history=history,
+                                          quota=quota)
 
     if mode == "ptt":
         try:
@@ -259,8 +300,14 @@ def _build_audio(cfg: dict, buf: TextBuffer, kbd_monitor=None, status_window=Non
         on_ai         = ai_handler.handle        if ai_handler else None
         on_ai_key_dwn = ai_handler.on_ai_key_down if ai_handler else None
 
+        on_edit = None
+        if editor:
+            from agent.edit_handler import make_edit_handler
+            on_edit = make_edit_handler(stt, editor, buf, vad_monitor=None, quota=quota)
+
         ptt = PushToTalk(
             on_utterance=on_utterance,
+            on_edit_utterance=on_edit,
             on_ai_utterance=on_ai,
             on_ai_key_down=on_ai_key_dwn,
             ptt_key=audio_cfg.get("ptt_key", "right_alt"),
@@ -285,6 +332,38 @@ def _build_audio(cfg: dict, buf: TextBuffer, kbd_monitor=None, status_window=Non
             vad_level=audio_cfg.get("vad_aggressiveness", 2),
         )
         monitor.start()
+
+        # VAD 模式下，编辑键仍用 PTT 方式（避免 VAD 误触发）
+        if editor:
+            try:
+                from agent.push_to_talk import PushToTalk
+                from agent.edit_handler import make_edit_handler
+                on_edit = make_edit_handler(stt, editor, buf, vad_monitor=monitor, quota=quota)
+
+                edit_ptt = PushToTalk(
+                    on_utterance=on_utterance,
+                    on_edit_utterance=on_edit,
+                    ptt_key=audio_cfg.get("ptt_key", "right_alt"),
+                    edit_key=audio_cfg.get("edit_key", "right_ctrl"),
+                    device=device,
+                )
+
+                _orig_press = edit_ptt._on_press
+
+                def _patched_press(key):
+                    from pynput.keyboard import Key
+                    edit_key_obj = edit_ptt._edit_key
+                    if key == edit_key_obj:
+                        monitor.pause()
+                    _orig_press(key)
+
+                edit_ptt._listener
+                edit_ptt._on_press = _patched_press
+                edit_ptt.start()
+                return monitor
+            except ImportError:
+                pass
+
         return monitor
 
 
@@ -307,14 +386,22 @@ def list_devices():
 def main():
     parser = argparse.ArgumentParser(description="Voice Keyboard Agent")
     parser.add_argument("--port",         default=None,        help="指定串口路径")
-    parser.add_argument("--no-serial",    action="store_true", help="不搜索 ESP32 串口（纯软件模式）")
+    parser.add_argument("--no-serial",    action="store_true", default=True,
+                                                               help="不搜索 ESP32 串口（默认，纯软件模式）")
+    parser.add_argument("--serial",       action="store_false", dest="no_serial",
+                                                               help="启用串口搜索（有 ESP32 硬件时使用）")
     parser.add_argument("--list-devices", action="store_true", help="列出可用麦克风设备后退出")
     parser.add_argument("--install",      action="store_true", help="注册开机自启动")
     parser.add_argument("--uninstall",    action="store_true", help="移除开机自启动")
     parser.add_argument("--no-ui",        action="store_true", help="不启动菜单栏/主窗口（纯命令行）")
+    parser.add_argument("--no-elevate",   action="store_true", help="不自动请求管理员权限（由父进程统一提权时使用）")
     args = parser.parse_args()
     if getattr(sys, "frozen", False):
         args.no_serial = True
+
+    # Windows：以管理员身份运行，确保键盘钩子优先级高于所有普通用户程序
+    if sys.platform == "win32" and not args.no_elevate:
+        _relaunch_as_admin()
 
     if args.list_devices:
         list_devices()
@@ -353,15 +440,37 @@ def main():
 
     print("[agent] Voice Keyboard Agent 启动")
 
+    # ── 云端登录 + 本地额度初始化 ─────────────────────────
+    quota = None
+    cfg = load_config()
+    cloud_cfg = cfg.get("cloud", {})
+    if cloud_cfg.get("email") and cloud_cfg.get("password"):
+        base_url = cloud_cfg.get("base_url", "http://localhost:8000")
+        try:
+            cloud = CloudClient(base_url=base_url)
+            cloud.login(cloud_cfg["email"], cloud_cfg["password"])
+            print(f"[cloud] 已登录云端（{cloud_cfg['email']}）")
+            quota = QuotaManager(cloud_client=cloud)
+            success = quota.initialize()
+            if success:
+                print(f"[quota] {quota.status_str()}")
+            else:
+                print("[quota] 初始化失败，使用本地缓存限额")
+        except Exception as e:
+            print(f"[cloud] 云端登录失败: {e}")
+            print("[cloud] 继续以无额度限制模式运行")
+    else:
+        print("[cloud] 未配置云端账号，无额度管理")
+
     # ── 后端 ─────────────────────────────────────────────────────
     backend_lock = threading.Lock()
-    backend = build_backend(args, buf, status_window, history)
+    backend = build_backend(args, buf, status_window, history, quota=quota)
 
     def reload_backend():
         with backend_lock:
             print("[agent] === 热重载后端 ===")
             backend.stop()
-            new_bk = build_backend(args, buf, status_window, history)
+            new_bk = build_backend(args, buf, status_window, history, quota=quota)
             backend.cfg          = new_bk.cfg
             backend.kbd_monitor  = new_bk.kbd_monitor
             backend.mouse_monitor= new_bk.mouse_monitor
@@ -401,6 +510,8 @@ def main():
         print("\n[agent] 退出")
         with backend_lock:
             backend.stop()
+        if quota:
+            quota.close()
         if status_window:
             status_window.stop()
         sys.exit(0)
@@ -412,8 +523,14 @@ def main():
     if status_window is not None:
         status_window.run()
     else:
+        sync_counter = 0
         while True:
             time.sleep(1)
+            sync_counter += 1
+            # 每 30 秒同步一次额度到云端
+            if quota and sync_counter >= 30:
+                quota.sync_to_cloud()
+                sync_counter = 0
 
 
 if __name__ == "__main__":

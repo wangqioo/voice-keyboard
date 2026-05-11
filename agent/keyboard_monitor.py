@@ -55,8 +55,8 @@ class KeyboardMonitor:
 
     def process_press(self, key):
         """供 PushToTalk 在 on_press 里调用——不创建独立 CGEventTap。"""
-        # 忽略我们自己调用 erase_last 时发出的退格
-        if typer.is_erasing():
+        # 忽略我们自己发出的按键（退格擦除 或 模拟输入过程中的 Ctrl 等）
+        if typer.is_erasing() or typer.is_simulating():
             return
 
         if key == kb.Key.backspace:

@@ -22,9 +22,15 @@ import sys
 
 import yaml
 
-_ROOT = pathlib.Path(__file__).parent.parent
+# PyInstaller 打包后 __file__ 指向临时解压目录，需用 sys.executable 的父目录
+# py2app 打包后 frozen 也为 True，但路径约定不同（由下方 _bundled_example_path 处理）
+if getattr(sys, 'frozen', False):
+    _ROOT = pathlib.Path(sys.executable).parent
+else:
+    _ROOT = pathlib.Path(__file__).parent.parent
+
 _USER_DIR = pathlib.Path.home() / ".voice-keyboard"
-# 优先从用户目录读取（打包成 .app 后的标准路径），其次从源码目录（开发模式）
+# 优先从用户目录读取（打包成 .app 后的标准路径），其次从源码/可执行文件目录（开发/PyInstaller 模式）
 _USER_CONFIG = _USER_DIR / "config.yaml"
 _USER_ENV    = _USER_DIR / ".env"
 _DEV_CONFIG  = _ROOT / "config.yaml"
@@ -44,12 +50,18 @@ def _resolve_env_path() -> pathlib.Path:
 
 
 def _bundled_example_path() -> pathlib.Path | None:
-    """打包后从 .app/Contents/Resources 找 config.yaml.example，开发模式从项目根。"""
+    """打包后从资源目录找 config.yaml.example，开发模式从项目根。
+
+    - py2app: sys.executable 在 Contents/MacOS/，example 在 Contents/Resources/
+    - PyInstaller: sys.executable 与资源文件同目录（_ROOT 已指向可执行文件父目录）
+    """
     candidates = []
-    # py2app: sys.executable 在 Contents/MacOS/，example 在 Contents/Resources/
     if getattr(sys, "frozen", False):
         exe_dir = pathlib.Path(sys.executable).resolve().parent
+        # py2app 路径约定
         candidates.append(exe_dir.parent / "Resources" / "config.yaml.example")
+        # PyInstaller 路径约定（资源与可执行文件同目录）
+        candidates.append(exe_dir / "config.yaml.example")
     candidates.append(_ROOT / "config.yaml.example")
     for p in candidates:
         if p.exists():
@@ -130,6 +142,7 @@ def _env_stt() -> dict | None:
         ("access_key_secret",  "STT_ACCESS_KEY_SECRET"),
         ("region",             "STT_REGION"),
         ("app_id",             "STT_APP_ID"),
+        ("api_secret",         "STT_API_SECRET"),
         ("token",              "STT_TOKEN"),
         ("cluster",            "STT_CLUSTER"),
     ]:
@@ -187,6 +200,22 @@ def _env_audio() -> dict | None:
     return cfg or None
 
 
+def _env_cloud() -> dict | None:
+    """从环境变量构建 cloud 配置块。"""
+    fields = {
+        "email":    os.getenv("CLOUD_EMAIL", "").strip(),
+        "password": os.getenv("CLOUD_PASSWORD", "").strip(),
+        "base_url": os.getenv("CLOUD_BASE_URL", "").strip(),
+    }
+    # email + password 必须同时存在才视为有效
+    if not fields["email"] or not fields["password"]:
+        return None
+    cfg = {k: v for k, v in fields.items() if v}
+    if "base_url" not in cfg:
+        cfg["base_url"] = "http://localhost:8000"
+    return cfg
+
+
 def load() -> dict:
     """
     返回合并后的配置 dict。
@@ -212,5 +241,10 @@ def load() -> dict:
         env_audio = _env_audio()
         if env_audio:
             cfg["audio"] = env_audio
+
+    if "cloud" not in cfg:
+        env_cloud = _env_cloud()
+        if env_cloud:
+            cfg["cloud"] = env_cloud
 
     return cfg

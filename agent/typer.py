@@ -1,6 +1,18 @@
 import platform
+import threading
 import time
 from pynput.keyboard import Controller, Key, KeyCode
+
+_LOG = r"C:\Users\10990\voice-keyboard\typer_debug.log"
+
+def _dbg(msg: str) -> None:
+    import datetime
+    line = f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {msg}\n"
+    try:
+        with open(_LOG, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
 
 _kb = Controller()
 _OS = platform.system()
@@ -44,21 +56,51 @@ if _OS == "Windows":
     _user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
     _user32.GetClipboardData.restype  = ctypes.c_void_p
     _user32.GetClipboardData.argtypes = [ctypes.c_uint]
+    _user32.PostMessageW.restype  = ctypes.wintypes.BOOL
+    _user32.PostMessageW.argtypes = [ctypes.wintypes.HWND, ctypes.c_uint,
+                                     ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM]
+    _user32.GetForegroundWindow.restype  = ctypes.wintypes.HWND
+    _user32.GetForegroundWindow.argtypes = []
+    _user32.GetWindowThreadProcessId.restype  = ctypes.wintypes.DWORD
+    _user32.GetWindowThreadProcessId.argtypes = [ctypes.wintypes.HWND,
+                                                  ctypes.POINTER(ctypes.wintypes.DWORD)]
+    _user32.EnumChildWindows.restype  = ctypes.wintypes.BOOL
+    _user32.EnumChildWindows.argtypes = [ctypes.wintypes.HWND, ctypes.c_void_p,
+                                          ctypes.wintypes.LPARAM]
+    _user32.GetClassNameW.restype  = ctypes.c_int
+    _user32.GetClassNameW.argtypes = [ctypes.wintypes.HWND, ctypes.c_wchar_p, ctypes.c_int]
+    _kernel32.OpenProcess.restype  = ctypes.c_void_p
+    _kernel32.OpenProcess.argtypes = [ctypes.wintypes.DWORD, ctypes.wintypes.BOOL,
+                                       ctypes.wintypes.DWORD]
+    _kernel32.CloseHandle.restype  = ctypes.wintypes.BOOL
+    _kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    _kernel32.QueryFullProcessImageNameW.restype  = ctypes.wintypes.BOOL
+    _kernel32.QueryFullProcessImageNameW.argtypes = [
+        ctypes.c_void_p, ctypes.wintypes.DWORD,
+        ctypes.c_wchar_p, ctypes.POINTER(ctypes.wintypes.DWORD),
+    ]
 
-# ── erase_last 的「正在擦除」标志 ─────────────────────────────────
-# keyboard_monitor 通过 is_erasing() 判断当前退格是否由我们发出，
-# 避免双重扣减 TextBuffer。
-# CPython GIL 保证单字节赋值是原子的，线程安全。
+# ── 原子标志：供 keyboard_monitor / push_to_talk 过滤自身产生的事件 ──────
+# _erasing   : erase_last() 正在发退格，避免 keyboard_monitor 双重扣减
+# _simulating: type_text() / clipboard paste 正在模拟按键（含 Ctrl+V）
+#              push_to_talk 的 _on_press 检查此标志，防止 Ctrl 被误识别为录音热键
+# CPython GIL 保证 bool 赋值原子，无需额外 Lock。
 
 _erasing: bool = False
 _simulating: bool = False   # 程序自己发 Cmd+C/V 等按键时置 True，让 PTT 监听忽略
+
 _use_clipboard_mode: bool = False
+# 需要用 PostMessage(WM_CHAR) 注入的进程名（小写）
+# 这些 Chromium 应用会把 KEYEVENTF_UNICODE 的 WM_KEYDOWN+WM_CHAR 都当字符处理，导致逗号重复
+_postmessage_apps: list[str] = ["wechat.exe", "weixin.exe"]
 
 
 def init(cfg: dict) -> None:
     """由 main.py 在启动时调用，根据 config.yaml 的 typing.method 配置打字方式。"""
-    global _use_clipboard_mode
+    global _use_clipboard_mode, _postmessage_apps
     _use_clipboard_mode = cfg.get("method", "unicode") == "clip"
+    apps = cfg.get("postmessage_apps", ["wechat.exe", "weixin.exe"])
+    _postmessage_apps = [a.lower() for a in apps]
     if _use_clipboard_mode:
         print("[typer] 剪贴板粘贴模式（适合微信等应用）")
 
@@ -68,7 +110,7 @@ def is_erasing() -> bool:
     return _erasing
 
 def is_simulating() -> bool:
-    """供 push_to_talk 检查：当前按键事件是否由程序自身发出（如 Cmd+C）。"""
+    """供 push_to_talk / keyboard_monitor 检查：当前是否由程序自身在模拟按键（如 Cmd+C/V）。"""
     return _simulating
 
 
@@ -105,6 +147,67 @@ elif _OS == "Linux":
 
 # ── 打字 ──────────────────────────────────────────────────────────
 
+def _foreground_exe_win() -> str:
+    """返回当前前台窗口的进程文件名（小写），失败返回空串。"""
+    try:
+        hwnd = _user32.GetForegroundWindow()
+        pid  = ctypes.wintypes.DWORD()
+        _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        h = _kernel32.OpenProcess(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return ""
+        buf  = ctypes.create_unicode_buffer(512)
+        size = ctypes.wintypes.DWORD(512)
+        _kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size))
+        _kernel32.CloseHandle(h)
+        return buf.value.split("\\")[-1].lower()
+    except Exception:
+        return ""
+
+
+def _find_render_widget_win(parent: int) -> int:
+    """在子窗口中找 Chromium 渲染层窗口（Chrome_RenderWidgetHostHWND），找不到返回 parent。"""
+    found = ctypes.wintypes.HWND(0)
+
+    WndEnumProc = ctypes.WINFUNCTYPE(ctypes.wintypes.BOOL,
+                                      ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+
+    def _cb(hwnd, _lp):
+        buf = ctypes.create_unicode_buffer(64)
+        _user32.GetClassNameW(hwnd, buf, 64)
+        if buf.value == "Chrome_RenderWidgetHostHWND":
+            found.value = hwnd
+            return False  # 停止枚举
+        return True
+
+    _user32.EnumChildWindows(parent, WndEnumProc(_cb), 0)
+    return found.value or parent
+
+
+def _type_via_postmessage_win(text: str) -> None:
+    """用 PostMessage(WM_CHAR) 注入文字，专用于微信等 Chromium 应用。
+
+    只发 WM_CHAR，不发 WM_KEYDOWN/WM_KEYUP，Chromium 不会双重处理逗号。
+    PostMessage 不经过全局键盘钩子，无需设 _simulating 标志。
+    """
+    WM_CHAR = 0x0102
+    parent = _user32.GetForegroundWindow()
+    hwnd   = _find_render_widget_win(parent)
+    _dbg(f"PostMessage: parent={hex(parent)} target={hex(hwnd)} found_widget={hwnd != parent}")
+
+    for char in text:
+        code = ord(char)
+        if code > 0xFFFF:
+            code -= 0x10000
+            high = 0xD800 + (code >> 10)
+            low  = 0xDC00 + (code & 0x3FF)
+            _user32.PostMessageW(hwnd, WM_CHAR, high, 1)
+            _user32.PostMessageW(hwnd, WM_CHAR, low,  1)
+        else:
+            _user32.PostMessageW(hwnd, WM_CHAR, code, 1)
+        time.sleep(0.012)
+
+
 def type_text(text: str) -> None:
     """在当前焦点输入框打出任意 Unicode 文字（含汉字）"""
     if not text:
@@ -114,61 +217,82 @@ def type_text(text: str) -> None:
     elif _OS == "Windows":
         if _use_clipboard_mode:
             _type_via_clipboard_win(text)
+        elif bool(_postmessage_apps) and _foreground_exe_win() in _postmessage_apps:
+            _dbg("检测到微信，切换 PostMessage 模式")
+            _type_via_postmessage_win(text)
         else:
+            _dbg(f"SendInput 模式: exe={_foreground_exe_win()!r}")
             _type_via_sendinput(text)
     else:
         _type_via_xtest(text)  # Linux
 
 
 def _type_via_quartz(text: str) -> None:
-    # macOS：CGEvent 逐字发送 Unicode，绕过 IME
-    src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
-    for char in text:
-        for key_down in (True, False):
-            evt = Quartz.CGEventCreateKeyboardEvent(src, 0, key_down)
-            Quartz.CGEventKeyboardSetUnicodeString(evt, len(char), char)
-            Quartz.CGEventPost(Quartz.kCGHIDEventTap, evt)
-        time.sleep(0.012)
+    global _simulating
+    _simulating = True
+    try:
+        src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
+        for char in text:
+            for key_down in (True, False):
+                evt = Quartz.CGEventCreateKeyboardEvent(src, 0, key_down)
+                Quartz.CGEventKeyboardSetUnicodeString(evt, len(char), char)
+                Quartz.CGEventPost(Quartz.kCGHIDEventTap, evt)
+            time.sleep(0.012)
+    finally:
+        _simulating = False
 
 
 def _type_via_sendinput(text: str) -> None:
-    # Windows：SendInput + KEYEVENTF_UNICODE 逐字发送，绕过 IME
-    for char in text:
-        code = ord(char)
-        # BMP 以外的字符（emoji 等）拆成 UTF-16 代理对
-        if code > 0xFFFF:
-            code -= 0x10000
-            scans = [0xD800 + (code >> 10), 0xDC00 + (code & 0x3FF)]
-        else:
-            scans = [code]
+    global _simulating
+    _simulating = True
+    try:
+        for char in text:
+            code = ord(char)
+            if code > 0xFFFF:
+                code -= 0x10000
+                scans = [0xD800 + (code >> 10), 0xDC00 + (code & 0x3FF)]
+            else:
+                scans = [code]
 
-        for scan in scans:
-            for flags in [_KEYEVENTF_UNICODE, _KEYEVENTF_UNICODE | _KEYEVENTF_KEYUP]:
-                inp = _INPUT(
-                    type=_INPUT_KEYBOARD,
-                    ki=_KEYBDINPUT(wVk=0, wScan=scan, dwFlags=flags),
-                )
-                _user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
-        time.sleep(0.012)
+            for scan in scans:
+                for flags in [_KEYEVENTF_UNICODE, _KEYEVENTF_UNICODE | _KEYEVENTF_KEYUP]:
+                    inp = _INPUT(
+                        type=_INPUT_KEYBOARD,
+                        ki=_KEYBDINPUT(wVk=0, wScan=scan, dwFlags=flags),
+                    )
+                    _user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
+            time.sleep(0.012)
+    finally:
+        _simulating = False
 
 
 def _type_via_clipboard_win(text: str) -> None:
     # Windows 剪贴板粘贴模式：适合微信等拦截 SendInput 的应用
-    _set_clipboard_win(text)
-    time.sleep(0.03)
-    _kb.press(Key.ctrl)
+    # _simulating=True 防止 Ctrl 键被 push_to_talk 监听器误识别为录音热键
+    global _simulating
+    _simulating = True
     try:
-        _press_key(KeyCode.from_char("v"))
+        _set_clipboard_win(text)
+        time.sleep(0.03)
+        _kb.press(Key.ctrl)
+        try:
+            _press_key(KeyCode.from_char("v"))
+        finally:
+            _kb.release(Key.ctrl)
+        time.sleep(0.03)
     finally:
-        _kb.release(Key.ctrl)
-    time.sleep(0.03)
+        _simulating = False
 
 
 def _type_via_xtest(text: str) -> None:
-    # Linux：pynput 逐字，底层走 X11 XTest，绕过 IME
-    for char in text:
-        _kb.type(char)
-        time.sleep(0.012)
+    global _simulating
+    _simulating = True
+    try:
+        for char in text:
+            _kb.type(char)
+            time.sleep(0.012)
+    finally:
+        _simulating = False
 
 
 # ── 退格擦除 ──────────────────────────────────────────────────────
