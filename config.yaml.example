@@ -53,6 +53,19 @@ stt:
 #   language: zh
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 方案五：TypeUp 后端代理（由 TypeUp Desktop 自动写入）
+# 账号、权益、额度和模型 Key 都由 TypeUp 后端处理，本机只保存登录 token。
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# stt:
+#   provider: typeup_backend
+#   api_base_url: http://localhost:8000
+#   access_token: "..."
+#   refresh_token: "..."
+#   cloud_bridge_path: "/path/to/cloud-bridge.json"
+#   model: glm-asr-2512
+#   language: zh
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 音频设置
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 audio:
@@ -89,7 +102,7 @@ audio:
 # 与 stt 可以用同一个 provider，也可以分开配置
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 llm:
-  provider: openai          # openai | aliyun（通义千问）| volcengine（豆包）| zhipuai（智谱 GLM）
+  provider: openai          # openai | aliyun（通义千问）| volcengine（豆包）| zhipuai（智谱 GLM）| typeup_backend
   api_key: "sk-..."         # 与 stt 用同一个 key 即可（OpenAI 通用）
   model: gpt-4o-mini        # 推荐 gpt-4o-mini（快且便宜）
 
@@ -110,6 +123,15 @@ llm:
 #   provider: volcengine
 #   api_key: "..."          # ARK API Key
 #   model: doubao-lite-4k
+
+# TypeUp 后端代理示例（由 TypeUp Desktop 自动写入）：
+# llm:
+#   provider: typeup_backend
+#   api_base_url: http://localhost:8000
+#   access_token: "..."
+#   refresh_token: "..."
+#   cloud_bridge_path: "/path/to/cloud-bridge.json"
+#   model: glm-4-flash
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Claude Code AI 编程模式（可选）

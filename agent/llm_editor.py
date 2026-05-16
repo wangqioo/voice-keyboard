@@ -8,15 +8,20 @@ LLM 文字编辑器。
   aliyun      — 通义千问 Qwen（中文优化）
   volcengine  — 豆包 Doubao（字节跳动）
   zhipuai     — 智谱 AI GLM（参考 transmission_assistant 项目的集成方式）
+  typeup_backend — TypeUp 后端代理（账号、权益、额度由后端处理）
 
 扩展新 provider：
   在 __init__ 的 elif 链中添加分支，或参照 openai / zhipuai 分支实现。
 """
 
+import json
+import pathlib
 import ssl
+import time
 
 import certifi
 import httpx
+import requests
 
 _SYSTEM_PROMPT = """你是一个专业的文字编辑助手。
 用户会给你一段原文和一条修改指令。
@@ -35,6 +40,103 @@ def _build_ssl_context() -> ssl.SSLContext:
 
 def _build_httpx_client() -> httpx.Client:
     return httpx.Client(verify=_build_ssl_context(), timeout=30.0)
+
+
+class _TypeUpBackendLLM:
+    def __init__(self, cfg: dict):
+        self._api_base_url = str(cfg.get("api_base_url") or cfg.get("base_url") or "http://localhost:8000").rstrip("/")
+        self._access_token = str(cfg.get("access_token") or cfg.get("api_key") or "").strip()
+        self._refresh_token = str(cfg.get("refresh_token") or "").strip()
+        self._cloud_bridge_path = str(cfg.get("cloud_bridge_path") or "").strip()
+        self._reload_tokens_from_bridge()
+        if not self._api_base_url:
+            raise RuntimeError("TypeUp 后端地址未配置")
+        if not self._access_token:
+            raise RuntimeError("请先登录 TypeUp 后端账号")
+
+    def chat(self, messages: list[dict], max_tokens: int = 1000) -> str:
+        resp = self._post_chat(messages, max_tokens=max_tokens)
+        if resp.status_code == 401 and self._reload_tokens_from_bridge():
+            resp = self._post_chat(messages, max_tokens=max_tokens)
+        if resp.status_code == 401 and self._refresh_token:
+            self._refresh_access_token()
+            resp = self._post_chat(messages, max_tokens=max_tokens)
+        if not resp.ok:
+            raise RuntimeError(self._error_message(resp, "TypeUp 后端 LLM 请求失败"))
+        return (resp.json().get("text") or "").strip()
+
+    def _post_chat(self, messages: list[dict], max_tokens: int):
+        return requests.post(
+            f"{self._api_base_url}/v1/llm/chat",
+            headers={"Authorization": f"Bearer {self._access_token}"},
+            json={"messages": messages, "temperature": 0.1, "max_tokens": max_tokens},
+            timeout=65,
+        )
+
+    def _refresh_access_token(self) -> None:
+        resp = requests.post(
+            f"{self._api_base_url}/v1/auth/refresh",
+            json={"refresh_token": self._refresh_token},
+            timeout=15,
+        )
+        if not resp.ok:
+            raise RuntimeError(self._error_message(resp, "TypeUp 后端登录已过期"))
+        data = resp.json()
+        self._access_token = data["access_token"]
+        self._refresh_token = data["refresh_token"]
+        self._persist_tokens()
+
+    def _reload_tokens_from_bridge(self) -> bool:
+        if not self._cloud_bridge_path:
+            return False
+        try:
+            path = pathlib.Path(self._cloud_bridge_path)
+            if not path.exists():
+                return False
+            payload = json.loads(path.read_text(encoding="utf-8") or "{}")
+            changed = False
+            api_base_url = str(payload.get("apiBaseUrl") or "").strip().rstrip("/")
+            access_token = str(payload.get("accessToken") or "").strip()
+            refresh_token = str(payload.get("refreshToken") or "").strip()
+            if api_base_url and api_base_url != self._api_base_url:
+                self._api_base_url = api_base_url
+                changed = True
+            if access_token and access_token != self._access_token:
+                self._access_token = access_token
+                changed = True
+            if refresh_token and refresh_token != self._refresh_token:
+                self._refresh_token = refresh_token
+                changed = True
+            if changed:
+                print("[llm] 已同步最新后端登录凭证")
+            return changed
+        except Exception as e:
+            print(f"[llm] 读取后端登录凭证失败: {e}")
+            return False
+
+    def _persist_tokens(self) -> None:
+        if not self._cloud_bridge_path:
+            return
+        try:
+            path = pathlib.Path(self._cloud_bridge_path)
+            payload = {}
+            if path.exists():
+                payload = json.loads(path.read_text(encoding="utf-8") or "{}")
+            payload["accessToken"] = self._access_token
+            payload["refreshToken"] = self._refresh_token
+            payload["updatedAt"] = int(time.time() * 1000)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            print(f"[llm] 同步后端登录凭证失败: {e}")
+
+    @staticmethod
+    def _error_message(resp, fallback: str) -> str:
+        try:
+            data = resp.json()
+            return data.get("error", {}).get("message") or data.get("detail") or fallback
+        except Exception:
+            return f"{fallback}: HTTP {resp.status_code} {resp.text}"
 
 
 class LLMEditor:
@@ -85,10 +187,14 @@ class LLMEditor:
             self._model        = cfg.get("model", "glm-4-flash")
             self._edit         = self._zhipu_edit
 
+        elif provider == "typeup_backend":
+            self._backend_client = _TypeUpBackendLLM(cfg)
+            self._edit = self._backend_edit
+
         else:
             raise ValueError(
                 f"未知 LLM provider: {provider!r}，"
-                f"支持: openai / aliyun / volcengine / zhipuai"
+                f"支持: openai / aliyun / volcengine / zhipuai / typeup_backend"
             )
 
     def edit(self, original: str, instruction: str) -> str:
@@ -101,6 +207,9 @@ class LLMEditor:
             {"role": "system", "content": system_prompt},
             {"role": "user",   "content": user_message},
         ]
+        if hasattr(self, "_backend_client"):
+            yield self._backend_client.chat(messages, max_tokens=1000)
+            return
         if hasattr(self, "_zhipu_client"):
             stream = self._zhipu_client.chat.completions.create(
                 model=self._model, messages=messages,
@@ -118,23 +227,23 @@ class LLMEditor:
 
     def chat(self, system_prompt: str, user_message: str) -> str:
         """通用 LLM 调用，返回模型回复文字。"""
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_message},
+        ]
+        if hasattr(self, "_backend_client"):
+            return self._backend_client.chat(messages, max_tokens=200)
         if hasattr(self, "_zhipu_client"):
             resp = self._zhipu_client.chat.completions.create(
                 model=self._model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user",   "content": user_message},
-                ],
+                messages=messages,
                 temperature=0.1,
                 max_tokens=200,
             )
         else:
             resp = self._client.chat.completions.create(
                 model=self._model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user",   "content": user_message},
-                ],
+                messages=messages,
                 temperature=0.1,
                 max_tokens=200,
             )
@@ -163,3 +272,12 @@ class LLMEditor:
             max_tokens=2000,
         )
         return resp.choices[0].message.content.strip()
+
+    def _backend_edit(self, original: str, instruction: str) -> str:
+        return self._backend_client.chat(
+            [
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": f"原文：{original}\n\n修改指令：{instruction}"},
+            ],
+            max_tokens=2000,
+        )
