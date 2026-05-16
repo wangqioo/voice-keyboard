@@ -2,6 +2,8 @@
 
 语音直接打字，无需手动输入。说话即可在任意输入框输出文字，支持中文、英文、混排，支持语音触发快捷键，支持语音修改刚打出的内容。
 
+仓库职责边界见 [docs/repository-boundaries.md](docs/repository-boundaries.md)。当前仓库定位为本地语音输入核心 engine；TypeUp 桌面端和云端后端分别由 `typeup-win` 与 `typeup-backend` 负责。
+
 ---
 
 ## 两种使用方式
