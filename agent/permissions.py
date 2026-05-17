@@ -10,6 +10,19 @@ from typing import Optional
 _DARWIN = sys.platform == "darwin"
 
 
+def activate_app_for_permission_prompt() -> None:
+    """让 macOS 以应用身份处理后续 TCC 弹窗。"""
+    if not _DARWIN:
+        return
+    try:
+        from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
+        app = NSApplication.sharedApplication()
+        app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+        app.activateIgnoringOtherApps_(True)
+    except Exception:
+        pass
+
+
 # 状态：granted / denied / not_determined / unknown
 def accessibility() -> str:
     """辅助功能权限——typer.py 通过 Quartz 发按键需要这个。"""
@@ -32,6 +45,7 @@ def accessibility() -> str:
 
 
 _iokit_check = None
+_iokit_request = None
 
 
 def _load_iokit_check():
@@ -54,6 +68,26 @@ def _load_iokit_check():
         return None
 
 
+def _load_iokit_request():
+    global _iokit_request
+    if _iokit_request is not None:
+        return _iokit_request
+    try:
+        import ctypes
+        import ctypes.util
+        path = ctypes.util.find_library("IOKit")
+        if not path:
+            return None
+        lib = ctypes.CDLL(path)
+        fn = lib.IOHIDRequestAccess
+        fn.argtypes = [ctypes.c_uint]
+        fn.restype = ctypes.c_uint
+        _iokit_request = fn
+        return fn
+    except Exception:
+        return None
+
+
 def input_monitoring() -> str:
     """输入监听权限——pynput 全局键盘监听需要这个。"""
     if not _DARWIN:
@@ -68,6 +102,35 @@ def input_monitoring() -> str:
         return {0: "granted", 1: "denied", 2: "not_determined"}.get(access, "unknown")
     except Exception:
         return "unknown"
+
+
+def request_accessibility() -> str:
+    """主动触发辅助功能授权提示/登记。"""
+    if not _DARWIN:
+        return "granted"
+    activate_app_for_permission_prompt()
+    try:
+        import HIServices  # type: ignore
+        from Foundation import NSDictionary
+        opts = NSDictionary.dictionaryWithObject_forKey_(True, "AXTrustedCheckOptionPrompt")
+        return "granted" if HIServices.AXIsProcessTrustedWithOptions(opts) else accessibility()
+    except Exception:
+        return accessibility()
+
+
+def request_input_monitoring() -> str:
+    """主动触发输入监听授权提示/登记。"""
+    if not _DARWIN:
+        return "granted"
+    activate_app_for_permission_prompt()
+    fn = _load_iokit_request()
+    if fn is None:
+        return input_monitoring()
+    try:
+        access = fn(1)  # kIOHIDRequestTypeListenEvent
+        return {0: "granted", 1: "denied", 2: "not_determined"}.get(access, input_monitoring())
+    except Exception:
+        return input_monitoring()
 
 
 def microphone() -> str:
@@ -89,6 +152,7 @@ def request_microphone(callback=None):
     """主动请求麦克风权限。系统弹窗在主线程调用最稳。"""
     if not _DARWIN:
         return
+    activate_app_for_permission_prompt()
     try:
         import AVFoundation  # type: ignore
         media = AVFoundation.AVMediaTypeAudio
@@ -99,19 +163,46 @@ def request_microphone(callback=None):
         print(f"[perm] 请求麦克风权限失败: {e}")
 
 
+def request_microphone_by_capture() -> None:
+    """通过短暂打开音频输入流触发 CoreAudio/TCC 麦克风登记。"""
+    if not _DARWIN:
+        return
+    try:
+        import sounddevice as sd
+        with sd.InputStream(channels=1, samplerate=16000, blocksize=1024):
+            sd.sleep(250)
+    except Exception as e:
+        print(f"[perm] 触发麦克风输入失败: {e}")
+
+
 def request_microphone_sync(timeout: float = 20.0) -> str:
     """请求麦克风权限并等待系统回调，供打包后的命令行入口调用。"""
     if not _DARWIN:
         return "granted"
-    done = threading.Event()
+    if microphone() == "granted":
+        return "granted"
+
     result = {"granted": False}
 
     def _callback(granted):
         result["granted"] = bool(granted)
-        done.set()
+        try:
+            from PyObjCTools import AppHelper
+            AppHelper.stopEventLoop()
+        except Exception:
+            pass
 
     request_microphone(_callback)
-    done.wait(timeout)
+    try:
+        from PyObjCTools import AppHelper
+        AppHelper.callLater(timeout, AppHelper.stopEventLoop)
+        AppHelper.runConsoleEventLoop()
+    except Exception:
+        done = threading.Event()
+        request_microphone(lambda granted: (result.update({"granted": bool(granted)}), done.set()))
+        done.wait(timeout)
+    if not result["granted"]:
+        request_microphone_by_capture()
     return "granted" if result["granted"] else microphone()
 
 
