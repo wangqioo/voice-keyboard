@@ -7,11 +7,13 @@ Voice Keyboard Agent —— PC 端后台程序入口。
   python -m agent.main --list-devices     # 列出可用麦克风设备
   python -m agent.main --install          # 注册开机自启动
   python -m agent.main --uninstall        # 移除开机自启动
+  python -m agent.main --headless         # 不启动悬浮状态窗（桌面端托管模式）
 """
 
 import argparse
 import json
 import os
+import re
 import signal
 import sys
 import threading
@@ -92,10 +94,45 @@ _POLISH_SYSTEM = """你是文字润色助手。对用户说的话做最轻度的
 直接输出润色后的文字，不要任何解释、前缀或引号。"""
 
 
+_POLISH_LABEL_RE = re.compile(r"^(?:润色后|润色结果|修改后|修改结果|优化后|优化结果|结果|输出)\s*[:：]\s*")
+_LEADING_INVISIBLE_RE = re.compile(r"^[\s\ufeff\u200b\u200c\u200d]+")
+_LEADING_HASH_MARK_RE = re.compile(r"^[#＃]{1,6}[\s:：、，。,.!?！？;；-]*")
+
+
+def _clean_generated_text(text: str) -> str:
+    cleaned = str(text or "").strip().strip("\"'“”")
+    for _ in range(4):
+        before = cleaned
+        cleaned = _LEADING_INVISIBLE_RE.sub("", cleaned)
+        cleaned = _LEADING_HASH_MARK_RE.sub("", cleaned).strip()
+        if cleaned == before:
+            break
+    return cleaned.strip().strip("\"'“”")
+
+
+def _clean_polished_text(text: str) -> str:
+    cleaned = _clean_generated_text(text)
+    cleaned = re.sub(r"^```(?:\w+)?\s*", "", cleaned).strip()
+    cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+    for _ in range(3):
+        before = cleaned
+        cleaned = _POLISH_LABEL_RE.sub("", cleaned).strip()
+        cleaned = _clean_generated_text(cleaned)
+        cleaned = re.sub(r"^[-*•]\s+", "", cleaned).strip()
+        if cleaned == before:
+            break
+    return _clean_generated_text(cleaned)
+
+
 def make_utterance_handler(stt_client, buf: TextBuffer, kbd_mon=None, editor=None,
                            status_window=None, history: History | None = None):
     from agent.typer import type_text
-    def on_utterance(pcm: bytes, polish: bool = False):
+    def on_utterance(
+        pcm: bytes,
+        polish: bool = False,
+        clear_status: bool = True,
+        progress_status: bool = True,
+    ):
         mode = "polish" if polish else "dictate"
         try:
             text = stt_client.transcribe(pcm)
@@ -103,22 +140,23 @@ def make_utterance_handler(stt_client, buf: TextBuffer, kbd_mon=None, editor=Non
             print(f"[stt] 请求失败: {e}")
             if history is not None:
                 history.append(mode, "", "error", f"STT: {e}")
-            if status_window is not None:
+            if status_window is not None and progress_status:
                 status_window.set_state("error_stt")
             return
+        text = _clean_generated_text(text)
         if not text:
             print("[stt] 识别结果为空")
             if history is not None:
                 history.append(mode, "", "empty")
-            if status_window is not None:
+            if status_window is not None and progress_status:
                 status_window.set_state("empty_stt")
             return
         print(f"[stt] {text!r}")
         if polish and editor is not None:
-            if status_window is not None:
+            if status_window is not None and progress_status:
                 status_window.set_state("polishing")
             try:
-                polished = editor.chat(_POLISH_SYSTEM, text).strip()
+                polished = _clean_polished_text(editor.chat(_POLISH_SYSTEM, text))
                 if polished:
                     print(f"[stt] 微润色 → {polished!r}")
                     text = polished
@@ -129,7 +167,7 @@ def make_utterance_handler(stt_client, buf: TextBuffer, kbd_mon=None, editor=Non
             buf.push(text)
         except Exception as e:
             print(f"[stt] 打字失败: {e}")
-            if status_window is not None:
+            if status_window is not None and progress_status:
                 status_window.set_state("error_typing")
             if history is not None:
                 history.append(mode, text, "error", f"typing: {e}")
@@ -138,8 +176,10 @@ def make_utterance_handler(stt_client, buf: TextBuffer, kbd_mon=None, editor=Non
             history.append(mode, text, "ok")
         if kbd_mon is not None:
             kbd_mon.notify_voice_output()
-        if status_window is not None:
+        if status_window is not None and clear_status:
             status_window.set_state("idle")
+        if clear_status:
+            print("[typeup] 输入完成")
     return on_utterance
 
 
@@ -330,25 +370,47 @@ def main():
     parser.add_argument("--port",         default=None,        help="指定串口路径")
     parser.add_argument("--no-serial",    action="store_true", help="不搜索 ESP32 串口（纯软件模式）")
     parser.add_argument("--list-devices", action="store_true", help="列出可用麦克风设备后退出")
+    parser.add_argument("--result-json",  default=None,        help="把一次性命令的 JSON 结果写入指定文件")
     parser.add_argument("--permissions-json", action="store_true", help="输出 macOS 权限状态 JSON 后退出")
+    parser.add_argument("--request-accessibility", action="store_true", help="请求 macOS 辅助功能权限后退出")
+    parser.add_argument("--request-input-monitoring", action="store_true", help="请求 macOS 输入监听权限后退出")
     parser.add_argument("--request-microphone", action="store_true", help="请求 macOS 麦克风权限后退出")
     parser.add_argument("--install",      action="store_true", help="注册开机自启动")
     parser.add_argument("--uninstall",    action="store_true", help="移除开机自启动")
     parser.add_argument("--no-ui",        action="store_true", help="不启动菜单栏/主窗口（纯命令行）")
+    parser.add_argument("--headless",     action="store_true", help="不启动悬浮状态窗（供桌面端托管）")
     args = parser.parse_args()
     if getattr(sys, "frozen", False):
         args.no_serial = True
+
+    def emit_json(payload):
+        text = json.dumps(payload, ensure_ascii=False)
+        if args.result_json:
+            try:
+                with open(args.result_json, "w", encoding="utf-8") as f:
+                    f.write(text)
+            except Exception as e:
+                print(f"[agent] 写入 JSON 结果失败: {e}")
+        print(text)
 
     if args.list_devices:
         list_devices()
         return
     if args.permissions_json:
         from agent import permissions as _perm
-        print(json.dumps(_perm.all_status(), ensure_ascii=False))
+        emit_json(_perm.all_status())
+        return
+    if args.request_accessibility:
+        from agent import permissions as _perm
+        emit_json({"accessibility": _perm.request_accessibility()})
+        return
+    if args.request_input_monitoring:
+        from agent import permissions as _perm
+        emit_json({"input_monitoring": _perm.request_input_monitoring()})
         return
     if args.request_microphone:
         from agent import permissions as _perm
-        print(json.dumps({"microphone": _perm.request_microphone_sync()}, ensure_ascii=False))
+        emit_json({"microphone": _perm.request_microphone_sync()})
         return
     if args.install:
         install()
@@ -373,14 +435,15 @@ def main():
 
     # ── 状态悬浮窗 ───────────────────────────────────────────────
     status_window = None
-    try:
-        if sys.platform == "win32":
-            from agent.status_window_win import StatusWindow
-        else:
-            from agent.status_window import StatusWindow
-        status_window = StatusWindow()
-    except Exception as e:
-        print(f"[agent] 状态悬浮窗启动失败（{e}），将以无窗口模式运行")
+    if not args.headless:
+        try:
+            if sys.platform == "win32":
+                from agent.status_window_win import StatusWindow
+            else:
+                from agent.status_window import StatusWindow
+            status_window = StatusWindow()
+        except Exception as e:
+            print(f"[agent] 状态悬浮窗启动失败（{e}），将以无窗口模式运行")
 
     print("[agent] Voice Keyboard Agent 启动")
 
