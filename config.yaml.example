@@ -106,6 +106,17 @@ llm:
   api_key: "sk-..."         # 与 stt 用同一个 key 即可（OpenAI 通用）
   model: gpt-4o-mini        # 推荐 gpt-4o-mini（快且便宜）
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# AI 键专用 STT（可选）
+# 普通听写可继续使用上面的 stt provider；按住 ai_key 时单独用 GLM-ASR-2512。
+# 这样 AI 键无需先走讯飞/阿里云，直接用智谱语音转文本后交给 LLM 意图处理。
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ai_stt:
+#   provider: glm_asr_2512
+#   api_key: "..."           # 智谱 AI API Key，也可用 .env 的 GLM_API_KEY
+#   model: glm-asr-2512
+#   hotwords: ["Voice Keyboard", "备忘录", "撤回"]
+
 # 智谱 AI GLM 示例（与 stt.zhipuai 搭配，只需一个 API Key）：
 # llm:
 #   provider: zhipuai

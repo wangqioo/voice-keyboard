@@ -124,6 +124,7 @@ def _env_stt() -> dict | None:
         cfg["api_key"] = api_key
     for key, env in [
         ("model",              "STT_MODEL"),
+        ("base_url",           "STT_BASE_URL"),
         ("language",           "STT_LANGUAGE"),
         ("app_key",            "STT_APP_KEY"),
         ("access_key_id",      "STT_ACCESS_KEY_ID"),
@@ -161,6 +162,7 @@ def _env_llm() -> dict | None:
     for key, env in [
         ("model", "LLM_MODEL"),
         ("model", "GLM_MODEL"),  # 兼容 transmission_assistant
+        ("base_url", "LLM_BASE_URL"),
     ]:
         val = os.getenv(env, "").strip()
         if val:
@@ -184,6 +186,36 @@ def _env_audio() -> dict | None:
             cfg["vad_aggressiveness"] = int(cfg["vad_aggressiveness"])
         except ValueError:
             del cfg["vad_aggressiveness"]
+    return cfg or None
+
+
+def _env_ai_stt() -> dict | None:
+    """从环境变量构建 AI 键专用 STT 配置块。"""
+    provider = os.getenv("AI_STT_PROVIDER", "").strip()
+    api_key = os.getenv("AI_STT_API_KEY", "").strip()
+    glm_key = os.getenv("GLM_API_KEY", "").strip()
+
+    if not provider and api_key:
+        provider = "glm_asr_2512"
+    if provider in ("glm_asr_2512", "glm-asr-2512") and not api_key and glm_key:
+        api_key = glm_key
+
+    if not provider and not api_key:
+        return None
+
+    cfg: dict = {}
+    if provider:
+        cfg["provider"] = provider
+    if api_key:
+        cfg["api_key"] = api_key
+    for key, env in [
+        ("model", "AI_STT_MODEL"),
+        ("prompt", "AI_STT_PROMPT"),
+        ("hotwords", "AI_STT_HOTWORDS"),
+    ]:
+        val = os.getenv(env, "").strip()
+        if val:
+            cfg[key] = val
     return cfg or None
 
 
@@ -212,5 +244,10 @@ def load() -> dict:
         env_audio = _env_audio()
         if env_audio:
             cfg["audio"] = env_audio
+
+    if "ai_stt" not in cfg:
+        env_ai_stt = _env_ai_stt()
+        if env_ai_stt:
+            cfg["ai_stt"] = env_ai_stt
 
     return cfg

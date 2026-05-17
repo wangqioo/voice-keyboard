@@ -4,6 +4,7 @@ macOS 原生悬浮状态窗口，HUD 风格：毛玻璃背景 + 彩色状态点 
 """
 
 import queue
+import threading
 
 import objc
 from AppKit import (
@@ -30,6 +31,7 @@ _STATES: dict[str, tuple[str, tuple[float, float, float]]] = {
     "polish_recording": ("录音中 · 微润色",     (0.20, 0.78, 0.50)),  # 绿
     "ai_recording":     ("AI 指令录音中",      (0.69, 0.40, 0.85)),  # 紫
     "recognizing":      ("识别中",            (0.96, 0.62, 0.07)),  # 橙
+    "empty_stt":        ("未识别到语句",       (0.96, 0.62, 0.07)),  # 橙
     "polishing":        ("润色中",            (0.10, 0.74, 0.81)),  # 青
     "ai_processing":    ("AI 处理中",         (0.27, 0.62, 0.94)),  # 蓝
     "error_stt":        ("识别失败",           (0.94, 0.20, 0.20)),  # 深红
@@ -38,7 +40,7 @@ _STATES: dict[str, tuple[str, tuple[float, float, float]]] = {
     "error_perm":       ("权限未授予",          (0.94, 0.20, 0.20)),  # 深红
 }
 # 错误状态 1.5s 后自动消失
-_ERROR_STATES = {"error_stt", "error_typing", "error_llm", "error_perm"}
+_ERROR_STATES = {"error_stt", "error_typing", "error_llm", "error_perm", "empty_stt"}
 
 _BOTTOM_MARGIN = 96
 _HEIGHT        = 36
@@ -76,6 +78,9 @@ class _Controller(NSObject):
         self._effect = None
         self._dot = None
         self._label = None
+        self._state = "idle"
+        self._message_token = 0
+        self._message_width_text = ""
         self._build()
         return self
 
@@ -154,8 +159,17 @@ class _Controller(NSObject):
     def tick_(self, _timer):
         try:
             while True:
-                state = self._q.get_nowait()
-                self._apply(state)
+                item = self._q.get_nowait()
+                if isinstance(item, tuple) and item and item[0] == "message":
+                    _, text, token, *rest = item
+                    width_text = rest[0] if rest else text
+                    self._apply_message(text, token, width_text)
+                elif isinstance(item, tuple) and item and item[0] == "hide_message":
+                    _, token = item
+                    self._hide_message_now(token)
+                else:
+                    state = item[1] if isinstance(item, tuple) else item
+                    self._apply(state)
         except queue.Empty:
             pass
 
@@ -164,18 +178,33 @@ class _Controller(NSObject):
         if self._panel is None:
             return
         info = _STATES.get(state)
-        if info is None:
+        if info is None or state == "idle":
+            self._state = "idle"
+            self._message_width_text = ""
             self._panel.orderOut_(None)
             return
         text, rgb = info
 
-        # 量文字宽度
-        self._label.setStringValue_(text)
+        self._state = state
+        self._message_width_text = ""
+        self._layout(text, rgb, text)
+
+        if state in _ERROR_STATES:
+            NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                1.5, self, b"hide:", None, False,
+            )
+
+    @objc.python_method
+    def _layout(self, text: str, rgb, width_text: str):
+        self._label.setStringValue_(width_text)
         self._label.sizeToFit()
         text_w = self._label.frame().size.width
+
+        self._label.setStringValue_(text)
+        self._label.sizeToFit()
+        label_w = self._label.frame().size.width
         text_h = self._label.frame().size.height
 
-        # 计算窗口宽度
         h = _HEIGHT
         w = _PAD_LEFT + _DOT_SIZE + _DOT_GAP + text_w + _PAD_RIGHT
 
@@ -188,27 +217,38 @@ class _Controller(NSObject):
         self._effect.setFrame_(NSMakeRect(0, 0, w, h))
         self._effect.layer().setCornerRadius_(h / 2.0)
 
-        # 状态点
         dot_y = (h - _DOT_SIZE) / 2.0
         self._dot.setFrame_(NSMakeRect(_PAD_LEFT, dot_y, _DOT_SIZE, _DOT_SIZE))
         self._dot.set_color(rgb)
 
-        # 文字垂直居中
         label_y = (h - text_h) / 2.0
         self._label.setFrame_(NSMakeRect(
-            _PAD_LEFT + _DOT_SIZE + _DOT_GAP, label_y, text_w + 4, text_h,
+            _PAD_LEFT + _DOT_SIZE + _DOT_GAP, label_y, label_w + 4, text_h,
         ))
 
         self._panel.orderFrontRegardless()
 
-        # 错误状态自动消失
-        if state in _ERROR_STATES:
-            NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-                1.5, self, b"hide:", None, False,
-            )
+    @objc.python_method
+    def _apply_message(self, text: str, token: int, width_text: str | None = None):
+        if self._panel is None:
+            return
+        self._message_token = token
+        self._state = "message"
+        self._message_width_text = width_text or text
+        self._layout(text, (0.27, 0.62, 0.94), self._message_width_text)
+
+    @objc.python_method
+    def _hide_message_now(self, token: int):
+        if self._panel is None or token != self._message_token or self._state != "message":
+            return
+        self._state = "idle"
+        self._message_width_text = ""
+        self._panel.orderOut_(None)
 
     def hide_(self, _timer):
         if self._panel is not None:
+            self._state = "idle"
+            self._message_width_text = ""
             self._panel.orderOut_(None)
 
 
@@ -216,11 +256,36 @@ class StatusWindow:
     def __init__(self):
         self._q: queue.Queue[str] = queue.Queue()
         self._controller = None
+        self._message_token = 0
         self._extra_setup = []  # 主线程启动时回调（供菜单栏/主窗口附加）
 
     def set_state(self, state: str) -> None:
         """线程安全，从任意线程调用。"""
         self._q.put(state)
+
+    def show_message(self, text: str, seconds: float = 6.0) -> None:
+        self._message_token += 1
+        token = self._message_token
+        self._q.put(("message", text, token))
+        threading.Timer(seconds, self._hide_message, args=(token,)).start()
+
+    def show_typing_message(self, text: str, seconds: float = 6.0, interval: float = 0.006) -> None:
+        self._message_token += 1
+        token = self._message_token
+        step = max(1, len(text) // 36)
+
+        def run() -> None:
+            for idx in range(step, len(text) + step, step):
+                if token != self._message_token:
+                    return
+                self._q.put(("message", text[:idx], token, text))
+                threading.Event().wait(interval)
+            threading.Timer(seconds, self._hide_message, args=(token,)).start()
+
+        threading.Thread(target=run, daemon=True, name="StatusTypingMessage").start()
+
+    def _hide_message(self, token: int) -> None:
+        self._q.put(("hide_message", token))
 
     def add_main_thread_setup(self, fn) -> None:
         """注册一个在 NSApp 主循环启动后执行的初始化函数（菜单栏、主窗口构建等）。"""

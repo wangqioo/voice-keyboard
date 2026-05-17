@@ -22,3 +22,8 @@ python-dotenv
 
 # 讯飞语音听写（xunfei provider）
 websocket-client
+
+# Windows 托盘与打包
+pystray; sys_platform == "win32"
+pillow; sys_platform == "win32"
+pyinstaller; sys_platform == "win32"

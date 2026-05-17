@@ -145,7 +145,10 @@ class LLMEditor:
 
         if provider == "openai":
             from openai import OpenAI
-            self._client = OpenAI(api_key=cfg["api_key"], http_client=_build_httpx_client())
+            kwargs = {"api_key": cfg["api_key"], "http_client": _build_httpx_client()}
+            if cfg.get("base_url"):
+                kwargs["base_url"] = cfg["base_url"]
+            self._client = OpenAI(**kwargs)
             self._model  = cfg.get("model", "gpt-4o-mini")
             self._edit   = self._openai_edit
 

@@ -54,12 +54,13 @@ from agent.config import load as load_config
 from agent.history import History
 from agent.serial_reader import SerialReader
 from agent.text_buffer import TextBuffer
-from agent.typer import init as typer_init, list_shortcuts, send_shortcut, type_text
 
 
 # ── 串口回调 ───────────────────────────────────────────────────────
 
 def make_serial_handlers(buf: TextBuffer, history: History | None = None):
+    from agent.typer import list_shortcuts, send_shortcut, type_text
+
     def on_text(text: str):
         print(f"[agent] 打字: {text!r}")
         try:
@@ -93,6 +94,7 @@ _POLISH_SYSTEM = """你是文字润色助手。对用户说的话做最轻度的
 
 def make_utterance_handler(stt_client, buf: TextBuffer, kbd_mon=None, editor=None,
                            status_window=None, history: History | None = None):
+    from agent.typer import type_text
     def on_utterance(pcm: bytes, polish: bool = False):
         mode = "polish" if polish else "dictate"
         try:
@@ -108,6 +110,8 @@ def make_utterance_handler(stt_client, buf: TextBuffer, kbd_mon=None, editor=Non
             print("[stt] 识别结果为空")
             if history is not None:
                 history.append(mode, "", "empty")
+            if status_window is not None:
+                status_window.set_state("empty_stt")
             return
         print(f"[stt] {text!r}")
         if polish and editor is not None:
@@ -165,6 +169,7 @@ class _Backend:
 def build_backend(args, buf: TextBuffer, status_window, history: History) -> _Backend:
     bk = _Backend()
     bk.cfg = load_config()
+    from agent.typer import init as typer_init
     typer_init(bk.cfg.get("typing", {}))
 
     try:
@@ -239,8 +244,13 @@ def _build_audio(cfg: dict, buf: TextBuffer, kbd_monitor=None, status_window=Non
         try:
             from agent.ai_handler import AIHandler
             from agent.memo_store import MemoStore
+            ai_stt = stt
+            ai_stt_cfg = cfg.get("ai_stt", {})
+            if ai_stt_cfg:
+                ai_stt = STTClient(ai_stt_cfg)
+                print(f"[agent] AI 键 STT 使用独立 provider: {ai_stt_cfg.get('provider', 'openai')}")
             memo_store = MemoStore()
-            ai_handler = AIHandler(stt, editor, buf, memo_store=memo_store,
+            ai_handler = AIHandler(ai_stt, editor, buf, memo_store=memo_store,
                                    status_window=status_window, history=history)
             ai_key_name = audio_cfg.get("ai_key", "cmd_r")
             existing = memo_store.keys()
@@ -364,7 +374,10 @@ def main():
     # ── 状态悬浮窗 ───────────────────────────────────────────────
     status_window = None
     try:
-        from agent.status_window import StatusWindow
+        if sys.platform == "win32":
+            from agent.status_window_win import StatusWindow
+        else:
+            from agent.status_window import StatusWindow
         status_window = StatusWindow()
     except Exception as e:
         print(f"[agent] 状态悬浮窗启动失败（{e}），将以无窗口模式运行")
@@ -389,6 +402,7 @@ def main():
 
     def retype(text: str):
         # 历史 tab「再次打字」回调，UI 已隐藏后调度
+        from agent.typer import type_text
         try:
             type_text(text)
             buf.push(text)
