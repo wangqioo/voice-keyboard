@@ -140,6 +140,98 @@ _SYSTEM_ACTIONS = {
     "系统设置": "open_system_settings",
     "打开设置": "open_system_settings",
 }
+_MACOS_APP_SHORTCUT_PRESETS: dict[str, dict[str, str]] = {
+    # Chat and collaboration apps
+    "com.openai.codex": {
+        "发送": "cmd+enter",
+        "新建会话": "cmd+n",
+    },
+    "com.bytedance.macos.feishu": {
+        "发送": "enter",
+        "换行": "shift+enter",
+        "搜索": "cmd+k",
+    },
+    "com.bytedance.lark": {
+        "发送": "enter",
+        "换行": "shift+enter",
+        "搜索": "cmd+k",
+    },
+    "com.tencent.xinwechat": {
+        "发送": "enter",
+        "换行": "shift+enter",
+        "搜索": "cmd+f",
+    },
+    "com.tencent.weworkmac": {
+        "发送": "enter",
+        "换行": "shift+enter",
+        "搜索": "cmd+f",
+    },
+    "com.tinyspeck.slackmacgap": {
+        "发送": "cmd+enter",
+        "换行": "shift+enter",
+        "搜索": "cmd+g",
+    },
+    "ru.keepcoder.telegram": {
+        "发送": "enter",
+        "换行": "shift+enter",
+        "搜索": "cmd+f",
+    },
+
+    # Browsers
+    "com.google.chrome": {
+        "地址栏": "cmd+l",
+        "重新打开标签": "cmd+shift+t",
+        "开发者工具": "cmd+option+i",
+        "查找": "cmd+f",
+    },
+    "com.microsoft.edgemac": {
+        "地址栏": "cmd+l",
+        "重新打开标签": "cmd+shift+t",
+        "开发者工具": "cmd+option+i",
+        "查找": "cmd+f",
+    },
+    "com.apple.safari": {
+        "地址栏": "cmd+l",
+        "重新打开标签": "cmd+shift+t",
+        "查找": "cmd+f",
+        "阅读器": "cmd+shift+r",
+    },
+    "org.mozilla.firefox": {
+        "地址栏": "cmd+l",
+        "重新打开标签": "cmd+shift+t",
+        "开发者工具": "cmd+option+i",
+        "查找": "cmd+f",
+    },
+
+    # Editors and note tools
+    "com.microsoft.vscode": {
+        "命令面板": "cmd+shift+p",
+        "快速打开": "cmd+p",
+        "全局搜索": "cmd+shift+f",
+        "格式化": "option+shift+f",
+        "切换终端": "ctrl+`",
+    },
+    "com.todesktop.230313mzl4w4u92": {
+        "命令面板": "cmd+shift+p",
+        "快速打开": "cmd+p",
+        "全局搜索": "cmd+shift+f",
+        "格式化": "option+shift+f",
+        "切换终端": "ctrl+`",
+    },
+    "md.obsidian": {
+        "命令面板": "cmd+p",
+        "快速切换": "cmd+o",
+        "全局搜索": "cmd+shift+f",
+    },
+    "notion.id": {
+        "搜索": "cmd+p",
+        "新页面": "cmd+n",
+        "换行": "shift+enter",
+    },
+    "com.apple.textedit": {
+        "打开设置": "cmd+,",
+    },
+}
 _APP_SHORTCUTS: dict[str, dict[str, list]] = {}
 _HIGH_RISK_SHORTCUT_NAMES = {
     "发送",
@@ -1086,10 +1178,28 @@ def _app_shortcut_maps(app: ActiveApplication) -> list[dict[str, list]]:
                 keys.append(lowered)
     out = []
     for key in keys:
-        shortcuts = _APP_SHORTCUTS.get(key)
-        if shortcuts is not None:
-            out.append(shortcuts)
+        custom = _APP_SHORTCUTS.get(key)
+        if custom is not None:
+            out.append(custom)
+        preset = _macos_app_shortcut_preset(key)
+        if preset is not None:
+            out.append(preset)
     return out
+
+
+def _macos_app_shortcut_preset(app_key: str) -> dict[str, list] | None:
+    if _OS != "Darwin":
+        return None
+    shortcuts = _MACOS_APP_SHORTCUT_PRESETS.get(app_key.lower())
+    if not shortcuts:
+        return None
+    parsed_shortcuts: dict[str, list] = {}
+    for name, keys in shortcuts.items():
+        try:
+            parsed_shortcuts[name] = _parse_shortcut_keys(keys)
+        except ValueError as e:
+            print(f"[typer] 忽略内置活动应用快捷键 {app_key!r}/{name!r}: {e}")
+    return parsed_shortcuts or None
 
 
 def _load_custom_shortcuts(shortcuts) -> None:

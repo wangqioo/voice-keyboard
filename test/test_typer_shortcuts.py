@@ -59,6 +59,32 @@ class TyperShortcutTests(unittest.TestCase):
 
         press_keys.assert_called_once_with([Key.cmd, Key.enter])
 
+    def test_send_shortcut_uses_macos_builtin_app_preset(self):
+        app = typer.ActiveApplication("Feishu", "com.bytedance.macos.feishu", 42)
+        with (
+            patch.object(typer, "_OS", "Darwin"),
+            patch.dict(typer._APP_SHORTCUTS, {}, clear=True),
+            patch.object(typer, "current_application", return_value=app),
+            patch.object(typer, "_press_keys") as press_keys,
+        ):
+            self.assertTrue(typer.send_shortcut("发送"))
+
+        press_keys.assert_called_once_with([Key.enter])
+
+    def test_custom_app_shortcut_overrides_builtin_preset(self):
+        app = typer.ActiveApplication("Feishu", "com.bytedance.macos.feishu", 42)
+        with (
+            patch.object(typer, "_OS", "Darwin"),
+            patch.dict(typer._APP_SHORTCUTS, {
+                "com.bytedance.macos.feishu": {"发送": [Key.cmd, Key.enter]},
+            }, clear=True),
+            patch.object(typer, "current_application", return_value=app),
+            patch.object(typer, "_press_keys") as press_keys,
+        ):
+            self.assertTrue(typer.send_shortcut("发送"))
+
+        press_keys.assert_called_once_with([Key.cmd, Key.enter])
+
     def test_list_shortcuts_includes_active_application_shortcuts(self):
         app = typer.ActiveApplication("Codex", "com.openai.codex", 42)
         with (
@@ -98,6 +124,28 @@ class TyperShortcutTests(unittest.TestCase):
         send = next(entry for entry in catalog if entry.name == "发送")
         self.assertEqual(send.source, "application")
         self.assertEqual(send.risk, "high")
+
+    def test_shortcut_catalog_includes_macos_builtin_app_preset_metadata(self):
+        app = typer.ActiveApplication("Chrome", "com.google.Chrome", 42)
+        with (
+            patch.object(typer, "_OS", "Darwin"),
+            patch.dict(typer._APP_SHORTCUTS, {}, clear=True),
+            patch.object(typer, "current_application", return_value=app),
+        ):
+            catalog = typer.shortcut_catalog()
+
+        address_bar = next(entry for entry in catalog if entry.name == "地址栏")
+        self.assertEqual(address_bar.source, "application")
+        self.assertEqual(address_bar.application, "Chrome (com.google.Chrome)")
+
+    def test_macos_builtin_app_preset_is_not_used_on_other_platforms(self):
+        app = typer.ActiveApplication("Chrome", "com.google.Chrome", 42)
+        with (
+            patch.object(typer, "_OS", "Windows"),
+            patch.dict(typer._APP_SHORTCUTS, {}, clear=True),
+            patch.object(typer, "current_application", return_value=app),
+        ):
+            self.assertNotIn("地址栏", typer.list_shortcuts())
 
     def test_shortcut_policy_blocks_missing_shortcut_before_adapter_execution(self):
         app = typer.ActiveApplication("Codex", "com.openai.codex", 42)

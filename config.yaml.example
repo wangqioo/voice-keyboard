@@ -178,6 +178,7 @@ typing:
 
   # 实验性：活动应用快捷键。
   # Instruction Mode 会识别当前活动应用，并优先使用这里的映射。
+  # macOS 内置了常见浏览器、聊天工具、编辑器的默认动作；这里的配置会覆盖同名内置动作。
   # 这不是稳定产品承诺；用于验证“在活动应用里调用快捷键”的可行性。
   # key 可以写 bundle id（推荐）或应用名。macOS bundle id 可从日志里的活动应用信息确认。
   experimental_app_shortcuts:
