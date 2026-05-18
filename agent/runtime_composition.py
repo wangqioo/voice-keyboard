@@ -157,12 +157,10 @@ def build_audio_runtime(
             return None
 
         on_ai = ai_handler.handle if ai_handler else None
-        on_ai_key_dwn = ai_handler.on_ai_key_down if ai_handler else None
 
         ptt = PushToTalk(
             on_utterance=on_utterance,
             on_ai_utterance=on_ai,
-            on_ai_key_down=on_ai_key_dwn,
             ptt_key=audio_cfg.get("ptt_key", "right_alt"),
             ai_key=audio_cfg.get("ai_key", "cmd_r"),
             toggle_key=audio_cfg.get("toggle_key"),

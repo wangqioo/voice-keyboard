@@ -24,7 +24,6 @@ class InstructionModeExecutor:
         show: Callable[[str], None] | None = None,
         set_status: Callable[[str], None] | None = None,
         text_io: ContextManager | None = None,
-        clear_pending_output: Callable[[], None] | None = None,
     ):
         self._llm = llm_editor
         self._env = input_environment
@@ -33,7 +32,6 @@ class InstructionModeExecutor:
         self._show = show or (lambda message: print(message))
         self._set_status = set_status or (lambda state: None)
         self._text_io = text_io
-        self._clear_pending_output = clear_pending_output or (lambda: None)
 
     def execute(self, operation: VoiceTextOperation, instruction: str, selected: str) -> bool:
         if operation.kind == "shortcut":
@@ -118,8 +116,6 @@ class InstructionModeExecutor:
         )
 
         with self._io():
-            if not window.target.selected:
-                self._clear_pending_output()
             result = self._env.apply_replacement_plan(window, plan)
         if result.ok:
             self._record_effect(
@@ -215,8 +211,6 @@ class InstructionModeExecutor:
             return
         plan = self._removal_plan(window.text, instruction)
         with self._io():
-            if not window.target.selected:
-                self._clear_pending_output()
             result = self._env.apply_replacement_plan(
                 window,
                 plan,
@@ -255,7 +249,6 @@ class InstructionModeExecutor:
             f"old={effect.old_text!r} new={effect.new_text!r}"
         )
         with self._io():
-            self._clear_pending_output()
             result = self._env.apply_operation_reversal(effect)
         if not result.applied:
             self._show("撤回失败")
