@@ -10,7 +10,7 @@ from agent.input_environment import (
     TyperInputEnvironment,
 )
 from agent.input_environment import TargetLookupResult, TextTarget
-from agent.instruction_executor import InstructionModeExecutor
+from agent.instruction_executor import InstructionModeExecutor, _forced_punctuation_break
 from agent.operation_history import OperationEffect, OperationHistory
 from agent.text_buffer import TextBuffer
 from agent.voice_text_operation import VoiceTextOperation
@@ -255,6 +255,52 @@ class InstructionModeExecutorTests(unittest.TestCase):
         env.insert_generated_text.assert_any_call("第二句。")
         self.assertEqual(history.snapshot(), (OperationEffect.insert("第一句。第二句。"),))
 
+    def test_write_adds_local_punctuation_when_provider_stream_has_none(self):
+        llm = MagicMock()
+        llm.chat_stream.return_value = [
+            "北京天安门位于中国北京市中心是天安门广场的北端是中华人民共和国的象征也是世界上最大的城市广场之一"
+        ]
+        env = MagicMock()
+        env.insert_generated_text.side_effect = (
+            lambda text: TextInsertionResult(inserted_text=text)
+        )
+        history = OperationHistory()
+        executor = InstructionModeExecutor(llm, env, history)
+
+        executor.execute(VoiceTextOperation("write"), "介绍北京天安门", "")
+
+        inserted = "".join(call.args[0] for call in env.insert_generated_text.call_args_list)
+        self.assertIn("，", inserted)
+        self.assertIn("。", inserted)
+        self.assertEqual(history.snapshot(), (OperationEffect.insert(inserted),))
+
+    def test_write_normalizes_common_spoken_punctuation_names(self):
+        llm = MagicMock()
+        llm.chat_stream.return_value = ["常见水果例如苹果香蕉感叹号"]
+        env = MagicMock()
+        env.insert_generated_text.side_effect = (
+            lambda text: TextInsertionResult(inserted_text=text)
+        )
+        history = OperationHistory()
+        executor = InstructionModeExecutor(llm, env, history)
+
+        executor.execute(VoiceTextOperation("write"), "写一个例句", "")
+
+        inserted = "".join(call.args[0] for call in env.insert_generated_text.call_args_list)
+        self.assertEqual(inserted, "常见水果例如：苹果香蕉！")
+        self.assertEqual(history.snapshot(), (OperationEffect.insert(inserted),))
+
+    def test_forced_punctuation_break_waits_for_reasonable_length(self):
+        self.assertIsNone(_forced_punctuation_break("北京天安门"))
+        forced = _forced_punctuation_break(
+            "北京天安门位于中国北京市中心是天安门广场的北端是中华人民共和国的象征也是重要地标"
+        )
+        self.assertIsNotNone(forced)
+        emit, rest = forced
+        self.assertTrue(emit.endswith(("，", "。")))
+        self.assertTrue(emit)
+        self.assertIsInstance(rest, str)
+
     def test_write_cancelled_paste_does_not_record_insert_effect(self):
         llm = MagicMock()
         llm.chat_stream.return_value = ["第一句。"]
@@ -268,6 +314,23 @@ class InstructionModeExecutorTests(unittest.TestCase):
 
         self.assertEqual(history.snapshot(), ())
         self.assertEqual(messages, ["未点击到输入框，已取消输出"])
+
+    def test_write_copied_to_clipboard_shows_status_without_recording_insert_effect(self):
+        llm = MagicMock()
+        llm.chat_stream.return_value = ["第一句。"]
+        env = MagicMock()
+        env.insert_generated_text.return_value = TextInsertionResult(
+            failure="copied_to_clipboard",
+            copied_text="第一句。",
+        )
+        history = OperationHistory()
+        messages = []
+        executor = InstructionModeExecutor(llm, env, history, show=messages.append)
+
+        executor.execute(VoiceTextOperation("write"), "写一句", "")
+
+        self.assertEqual(history.snapshot(), ())
+        self.assertEqual(messages, ["已复制：第一句。"])
 
     def test_unsafe_tracked_segment_edit_does_not_call_llm(self):
         llm = MagicMock()

@@ -22,11 +22,13 @@ _STATES: dict[str, tuple[str, int]] = {
     "error_perm": ("权限未授予", 0x4444EF),
     "dictation_disabled": ("语音转写已关闭", 0x999999),
     "dictation_enabled": ("语音转写已开启", 0x78C931),
+    "dictation_mode": ("已切换到原文转文字", 0x5252F0),
+    "polish_mode": ("已切换到微润色转文字", 0x78C931),
 }
 
 _ERROR_STATES = {
     "error_stt", "error_typing", "error_llm", "error_perm", "empty_stt",
-    "dictation_disabled", "dictation_enabled",
+    "dictation_disabled", "dictation_enabled", "dictation_mode", "polish_mode",
 }
 _WM_APP_STATE = 0x8001
 _WM_APP_STOP = 0x8002

@@ -40,11 +40,13 @@ _STATES: dict[str, tuple[str, tuple[float, float, float]]] = {
     "error_perm":       ("权限未授予",          (0.94, 0.20, 0.20)),  # 深红
     "dictation_disabled": ("语音转写已关闭",      (0.55, 0.58, 0.62)),  # 灰
     "dictation_enabled":  ("语音转写已开启",      (0.20, 0.78, 0.50)),  # 绿
+    "dictation_mode":     ("已切换到原文转文字",   (0.94, 0.32, 0.31)),  # 红
+    "polish_mode":        ("已切换到微润色转文字", (0.20, 0.78, 0.50)),  # 绿
 }
 # 错误状态 1.5s 后自动消失
 _ERROR_STATES = {
     "error_stt", "error_typing", "error_llm", "error_perm", "empty_stt",
-    "dictation_disabled", "dictation_enabled",
+    "dictation_disabled", "dictation_enabled", "dictation_mode", "polish_mode",
 }
 
 _BOTTOM_MARGIN = 96
@@ -84,6 +86,7 @@ class _Controller(NSObject):
         self._dot = None
         self._label = None
         self._state = "idle"
+        self._state_token = 0
         self._message_token = 0
         self._message_width_text = ""
         self._build()
@@ -182,6 +185,8 @@ class _Controller(NSObject):
     def _apply(self, state: str):
         if self._panel is None:
             return
+        self._state_token += 1
+        token = self._state_token
         info = _STATES.get(state)
         if info is None or state == "idle":
             self._state = "idle"
@@ -196,7 +201,7 @@ class _Controller(NSObject):
 
         if state in _ERROR_STATES:
             NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-                1.5, self, b"hide:", None, False,
+                1.5, self, b"hide:", token, False,
             )
 
     @objc.python_method
@@ -250,8 +255,9 @@ class _Controller(NSObject):
         self._message_width_text = ""
         self._panel.orderOut_(None)
 
-    def hide_(self, _timer):
-        if self._panel is not None:
+    def hide_(self, timer):
+        token = timer.userInfo()
+        if self._panel is not None and token == self._state_token:
             self._state = "idle"
             self._message_width_text = ""
             self._panel.orderOut_(None)

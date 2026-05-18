@@ -5,7 +5,7 @@ from agent.ai_intent import IntentContext, IntentFallbackOptions, classify_inten
 
 
 class AIIntentTests(unittest.TestCase):
-    def test_selected_edit_instruction_does_not_override_chat_by_default(self):
+    def test_selected_edit_instruction_overrides_chat_by_default(self):
         llm = MagicMock()
         llm.chat.return_value = '{"type":"chat","reply":"请提供内容"}'
 
@@ -14,7 +14,18 @@ class AIIntentTests(unittest.TestCase):
             selected="这是一段原文",
         ))
 
-        self.assertEqual(result, {"type": "chat", "reply": "请提供内容"})
+        self.assertEqual(result, {"type": "edit"})
+
+    def test_selected_translation_instruction_overrides_write_by_default(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"write"}'
+
+        result = classify_intent(llm, IntentContext(
+            text="把这段话翻译成文言文",
+            selected="A gentle breeze brings the fragrance of osmanthus.",
+        ))
+
+        self.assertEqual(result, {"type": "edit"})
 
     def test_selected_edit_instruction_can_override_chat_when_enabled(self):
         llm = MagicMock()
@@ -30,6 +41,21 @@ class AIIntentTests(unittest.TestCase):
         )
 
         self.assertEqual(result, {"type": "edit"})
+
+    def test_selected_edit_override_can_be_disabled(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"write"}'
+
+        result = classify_intent(
+            llm,
+            IntentContext(
+                text="把这段话翻译成文言文",
+                selected="A gentle breeze brings the fragrance of osmanthus.",
+            ),
+            IntentFallbackOptions(selected_edit_override=False),
+        )
+
+        self.assertEqual(result, {"type": "write"})
 
     def test_edit_hint_without_selection_but_recent_text_does_not_override_by_default(self):
         llm = MagicMock()

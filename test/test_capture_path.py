@@ -115,6 +115,31 @@ class CapturePathTests(unittest.TestCase):
             CaptureStart(mode="dictate", polish=True),
         )
 
+    def test_push_to_talk_shows_status_when_double_tap_toggles_polish_mode(self):
+        on_dictation = MagicMock()
+        status = MagicMock()
+        ptt = PushToTalk(on_dictation, ptt_key="a", status_window=status)
+
+        with patch("agent.push_to_talk.time.monotonic", side_effect=[10.0, 10.2]):
+            ptt._on_press(ptt._ptt_keys[0])
+            ptt._on_release(ptt._ptt_keys[0])
+            ptt._on_press(ptt._ptt_keys[0])
+
+        status.set_state.assert_called_with("polish_mode")
+
+    def test_push_to_talk_shows_status_when_double_tap_toggles_back_to_dictation_mode(self):
+        on_dictation = MagicMock()
+        status = MagicMock()
+        ptt = PushToTalk(on_dictation, ptt_key="a", status_window=status)
+        ptt._capture_runtime.polish_mode = True
+
+        with patch("agent.push_to_talk.time.monotonic", side_effect=[10.0, 10.2]):
+            ptt._on_press(ptt._ptt_keys[0])
+            ptt._on_release(ptt._ptt_keys[0])
+            ptt._on_press(ptt._ptt_keys[0])
+
+        status.set_state.assert_called_with("dictation_mode")
+
 
 if __name__ == "__main__":
     unittest.main()

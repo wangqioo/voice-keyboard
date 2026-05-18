@@ -263,7 +263,7 @@ class TyperShortcutTests(unittest.TestCase):
         ):
             self.assertTrue(typer.has_focused_text_input())
 
-    def test_macos_focus_probe_allows_feishu_without_focused_element(self):
+    def test_macos_focus_probe_blocks_feishu_without_focused_element(self):
         class Workspace:
             @staticmethod
             def sharedWorkspace():
@@ -290,15 +290,74 @@ class TyperShortcutTests(unittest.TestCase):
             patch.object(typer, "NSWorkspace", Workspace),
             patch.object(typer, "ApplicationServices", AX),
         ):
+            self.assertFalse(typer.has_focused_text_input())
+
+    def test_macos_focus_fallback_logs_once_per_frontmost_app(self):
+        class Workspace:
+            @staticmethod
+            def sharedWorkspace():
+                return Workspace()
+
+            def frontmostApplication(self):
+                app = MagicMock()
+                app.processIdentifier.return_value = 42
+                app.localizedName.return_value = "Codex"
+                app.bundleIdentifier.return_value = "com.openai.codex"
+                return app
+
+        class AX:
+            @staticmethod
+            def AXUIElementCreateApplication(pid):
+                return object()
+
+            @staticmethod
+            def AXUIElementCopyAttributeValue(elem, attr, default):
+                return -25212, None
+
+        with (
+            patch.object(typer, "_OS", "Darwin"),
+            patch.object(typer, "NSWorkspace", Workspace),
+            patch.object(typer, "ApplicationServices", AX),
+            patch.object(typer, "_last_focus_fallback_log", None),
+            patch("builtins.print") as print_fn,
+        ):
+            self.assertTrue(typer.has_focused_text_input())
             self.assertTrue(typer.has_focused_text_input())
 
-    def test_macos_focus_probe_allows_common_rich_input_apps_without_focused_element(self):
+        print_fn.assert_called_once()
+
+    def test_macos_focus_probe_does_not_allow_fallback_in_clipboard_mode(self):
+        class Workspace:
+            @staticmethod
+            def sharedWorkspace():
+                return Workspace()
+
+            def frontmostApplication(self):
+                app = MagicMock()
+                app.processIdentifier.return_value = 42
+                app.localizedName.return_value = "Codex"
+                app.bundleIdentifier.return_value = "com.openai.codex"
+                return app
+
+        class AX:
+            @staticmethod
+            def AXUIElementCreateApplication(pid):
+                return object()
+
+            @staticmethod
+            def AXUIElementCopyAttributeValue(elem, attr, default):
+                return -25212, None
+
+        with (
+            patch.object(typer, "_OS", "Darwin"),
+            patch.object(typer, "_use_clipboard_mode", True),
+            patch.object(typer, "NSWorkspace", Workspace),
+            patch.object(typer, "ApplicationServices", AX),
+        ):
+            self.assertFalse(typer.has_focused_text_input())
+
+    def test_macos_focus_probe_allows_developer_apps_without_focused_element(self):
         cases = [
-            ("微信", "com.tencent.xinWeChat"),
-            ("企业微信", "com.tencent.WeWorkMac"),
-            ("钉钉", "com.alibaba.DingTalk"),
-            ("Slack", "com.tinyspeck.slackmacgap"),
-            ("Notion", "notion.id"),
             ("Cursor", "com.todesktop.230313mzl4w4u92"),
             ("Codex", "com.openai.codex"),
         ]
@@ -308,6 +367,27 @@ class TyperShortcutTests(unittest.TestCase):
                 self.assertTrue(
                     typer._allows_typing_without_focused_element(bundle_id, app_name)
                 )
+
+    def test_macos_focus_probe_blocks_chat_apps_without_focused_element(self):
+        cases = [
+            ("微信", "com.tencent.xinWeChat"),
+            ("企业微信", "com.tencent.WeWorkMac"),
+            ("飞书", "com.bytedance.lark"),
+            ("Slack", "com.tinyspeck.slackmacgap"),
+        ]
+
+        for app_name, bundle_id in cases:
+            with self.subTest(app_name=app_name):
+                self.assertFalse(
+                    typer._allows_typing_without_focused_element(bundle_id, app_name)
+                )
+
+    def test_macos_focus_probe_blocks_unknown_apps_without_focused_element(self):
+        self.assertFalse(
+            typer._allows_typing_without_focused_element(
+                "com.example.notes", "Example Notes"
+            )
+        )
 
     def test_macos_focus_probe_does_not_allow_finder_without_focused_element(self):
         self.assertFalse(

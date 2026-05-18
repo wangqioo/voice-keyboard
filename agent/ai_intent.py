@@ -34,6 +34,7 @@ class IntentContext:
 @dataclass(frozen=True)
 class IntentFallbackOptions:
     multi_step_guard: bool = True
+    selected_edit_override: bool = True
     edit_hint_override: bool = False
     memo_fuzzy_recall: bool = True
 
@@ -43,6 +44,7 @@ class IntentFallbackOptions:
             return cls()
         return cls(
             multi_step_guard=bool(cfg.get("multi_step_guard", True)),
+            selected_edit_override=bool(cfg.get("selected_edit_override", True)),
             edit_hint_override=bool(cfg.get("edit_hint_override", False)),
             memo_fuzzy_recall=bool(cfg.get("memo_fuzzy_recall", True)),
         )
@@ -118,6 +120,13 @@ def apply_intent_fallbacks(
     intent = result.get("type", "chat")
     if fallbacks.multi_step_guard and looks_like_multi_step_instruction(ctx.text):
         return {"type": "chat", "reply": _MULTI_STEP_FEEDBACK}
+    if (
+        fallbacks.selected_edit_override
+        and ctx.selected
+        and intent in {"chat", "write"}
+        and looks_like_edit_instruction(ctx.text)
+    ):
+        return {"type": "edit"}
     if (
         fallbacks.edit_hint_override
         and (ctx.selected or ctx.recent_text)

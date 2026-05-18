@@ -109,6 +109,7 @@ class ReversalResult:
 class TextInsertionResult:
     inserted_text: str = ""
     failure: str | None = None
+    copied_text: str = ""
 
     @property
     def ok(self) -> bool:
@@ -172,9 +173,7 @@ class TyperInputEnvironment:
             return TextInsertionResult(inserted_text=text)
         if not self._text_io.confirm_paste_text(text):
             return TextInsertionResult(failure="no_focused_input")
-        self._text_io.paste_text(text)
-        self._buf.push(text)
-        return TextInsertionResult(inserted_text=text)
+        return TextInsertionResult(failure="copied_to_clipboard", copied_text=text)
 
     def insert_text_after_selection(self, text: str, selected: str = "") -> None:
         if selected:

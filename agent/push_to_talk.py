@@ -144,6 +144,7 @@ class PushToTalk:
             start = self._capture_runtime.press_dictation(key, now)
             if isinstance(start, PolishToggle):
                 mode_name = "微润色" if start.polish else "原文"
+                self._set_status("polish_mode" if start.polish else "dictation_mode")
                 print(f"[ptt] 切换为「{mode_name}」模式")
                 return
             if start is None:

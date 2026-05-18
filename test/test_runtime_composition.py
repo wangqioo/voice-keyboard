@@ -128,6 +128,7 @@ class RuntimeCompositionTests(unittest.TestCase):
             handler_cls.call_args.kwargs["intent_fallbacks"],
             IntentFallbackOptions(
                 multi_step_guard=False,
+                selected_edit_override=True,
                 edit_hint_override=True,
                 memo_fuzzy_recall=False,
             ),

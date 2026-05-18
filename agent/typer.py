@@ -57,6 +57,7 @@ if _OS == "Windows":
 _erasing: bool = False
 _simulating: bool = False   # 程序自己发 Cmd+C/V 等按键时置 True，让 PTT 监听忽略
 _use_clipboard_mode: bool = False
+_last_focus_fallback_log: tuple[str, int | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -278,6 +279,7 @@ def type_text(text: str) -> None:
 
 def has_focused_text_input() -> bool:
     """Best-effort focus check before emitting text."""
+    global _last_focus_fallback_log
     if _OS != "Darwin":
         return True
     try:
@@ -291,12 +293,16 @@ def has_focused_text_input() -> bool:
         elem = ApplicationServices.AXUIElementCreateApplication(pid)
         err, focused = ApplicationServices.AXUIElementCopyAttributeValue(elem, "AXFocusedUIElement", None)
         if err != 0 or focused is None:
-            if _allows_typing_without_focused_element(bundle_id, app_name):
-                print(
-                    f"[typer] focus check: {app_name} no focused element err={err}, "
-                    "allowed by app fallback"
-                )
+            if not _use_clipboard_mode and _allows_typing_without_focused_element(bundle_id, app_name):
+                key = (bundle_id or app_name, pid)
+                if key != _last_focus_fallback_log:
+                    print(
+                        f"[typer] focus check: {app_name} no focused element err={err}, "
+                        "allowed by app fallback"
+                    )
+                    _last_focus_fallback_log = key
                 return True
+            _last_focus_fallback_log = None
             print(f"[typer] focus check: {app_name} no focused element err={err}")
             return False
         err, role = ApplicationServices.AXUIElementCopyAttributeValue(focused, "AXRole", None)
@@ -319,8 +325,10 @@ def has_focused_text_input() -> bool:
             f"subrole={subrole!r} desc={description!r} "
             f"value_settable={settable_value} range_settable={settable_range} ok={ok}"
         )
+        _last_focus_fallback_log = None
         return ok
     except Exception as e:
+        _last_focus_fallback_log = None
         print(f"[typer] focus check failed: {e}")
         return False
 
@@ -416,46 +424,35 @@ def _looks_like_browser_document(bundle_id: str, role: str, subrole: str, descri
 def _allows_typing_without_focused_element(bundle_id: str, app_name: str) -> bool:
     bundle = bundle_id.lower()
     name = app_name.lower()
+    # Only a tiny set of developer input environments are safe enough to accept
+    # typed events when macOS Accessibility cannot prove a focused text element.
+    # Every other app should use the explicit clipboard-copy fallback instead of
+    # risking a silent "typed successfully" result with no text inserted.
     allow_markers = (
-        "lark", "feishu", "wechat", "weixin", "wxwork", "wecom",
-        "dingtalk", "dingding", "slack", "discord", "telegram",
-        "notion", "obsidian", "vscode", "cursor", "trae", "codex",
-    )
-    allow_names = (
-        "飞书", "微信", "企业微信", "钉钉", "语雀", "腾讯会议",
-        "飞项", "飞连", "石墨", "幕布",
+        "vscode", "cursor", "trae", "codex",
     )
     if any(marker in bundle or marker in name for marker in allow_markers):
         return True
-    return any(label in app_name for label in allow_names)
+    return False
 
 
 def confirm_paste_without_focused_input(text: str) -> bool:
     preview = (text or "").replace("\n", " ")[:80]
-    message = f"未点击到输入框。\n\n是否把识别结果复制到剪贴板并尝试粘贴？\n\n{preview}"
-    if _OS == "Darwin":
-        script = (
-            'display dialog '
-            + _osascript_quote(message)
-            + ' buttons {"取消", "粘贴"} default button "粘贴" with icon caution'
-        )
-        try:
-            result = subprocess.run(
-                ["osascript", "-e", script],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            return result.returncode == 0 and "button returned:粘贴" in result.stdout
-        except Exception:
-            return False
-    print(f"[typer] 未点击到输入框，跳过输出: {preview}")
-    return False
+    try:
+        copy_to_clipboard(text)
+        print(f"[typer] 未点击到输入框，已复制到剪贴板: {preview}")
+        return True
+    except Exception as e:
+        print(f"[typer] 未点击到输入框，复制失败: {e}: {preview}")
+        return False
 
 
 def paste_text(text: str) -> None:
     replace_selection(text)
+
+
+def copy_to_clipboard(text: str) -> None:
+    _set_clipboard(str(text or ""))
 
 
 def _osascript_quote(text: str) -> str:

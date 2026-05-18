@@ -169,6 +169,9 @@ instruction_mode:
   intent_fallbacks:
     # 安全类兜底：当前运行时不自动执行多步骤指令。
     multi_step_guard: true
+    # 目标明确兜底：已有 Explicit Selection 且语音明显是翻译/润色/改写时，
+    # 即使模型误判成写作/聊天，也按编辑当前选区处理。
+    selected_edit_override: true
     # 语义纠错兜底：默认关闭，避免把用户的询问/分析误改成编辑操作。
     edit_hint_override: false
     # 便利类兜底：仅在“我的 X 是什么 / 插入 X”等查询或插入句式下模糊匹配可复用文本。

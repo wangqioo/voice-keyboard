@@ -11,6 +11,8 @@ Voice Keyboard Agent —— PC 端后台程序入口。
 """
 
 import argparse
+import atexit
+import hashlib
 import json
 import os
 import signal
@@ -69,6 +71,63 @@ from agent.history import History
 from agent.input_environment import TyperInputEnvironment
 from agent.runtime_composition import RuntimeOptions, build_runtime_backend, options_from_args
 from agent.text_buffer import TextBuffer
+
+_RUNTIME_LOCK_FILE = None
+
+
+def _runtime_lock_path() -> Path:
+    key = hashlib.sha1(str(Path.cwd().resolve()).encode("utf-8")).hexdigest()[:12]
+    return Path(os.environ.get("TMPDIR", "/tmp")) / f"voice-keyboard-{key}.lock"
+
+
+def _acquire_runtime_lock() -> bool:
+    """Keep one desktop runtime per checkout so hotkeys and HUDs do not stack."""
+    global _RUNTIME_LOCK_FILE
+    if _RUNTIME_LOCK_FILE is not None:
+        return True
+    path = _runtime_lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a+", encoding="utf-8")
+    try:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.seek(0)
+        existing = handle.read().strip()
+        detail = f" PID={existing}" if existing else ""
+        print(f"[agent] 已有 Voice Keyboard 运行中{detail}，本次启动退出")
+        handle.close()
+        return False
+    except ImportError:
+        # Windows tray has its own lifecycle. On platforms without fcntl, avoid
+        # blocking startup rather than pretending we have a reliable lock.
+        handle.close()
+        return True
+    handle.seek(0)
+    handle.truncate()
+    handle.write(str(os.getpid()))
+    handle.flush()
+    _RUNTIME_LOCK_FILE = handle
+    atexit.register(_release_runtime_lock)
+    return True
+
+
+def _release_runtime_lock() -> None:
+    global _RUNTIME_LOCK_FILE
+    if _RUNTIME_LOCK_FILE is None:
+        return
+    try:
+        import fcntl
+
+        fcntl.flock(_RUNTIME_LOCK_FILE.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        pass
+    try:
+        _RUNTIME_LOCK_FILE.close()
+    except Exception:
+        pass
+    _RUNTIME_LOCK_FILE = None
 
 
 # ── 串口回调 ───────────────────────────────────────────────────────
@@ -189,6 +248,9 @@ def main():
         return
     if args.uninstall:
         uninstall()
+        return
+
+    if not _acquire_runtime_lock():
         return
 
     from agent.config import ensure_user_config

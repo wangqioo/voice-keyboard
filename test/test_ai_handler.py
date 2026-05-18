@@ -197,24 +197,26 @@ class InputEnvironmentTests(unittest.TestCase):
         self.assertIn(("type_text", "dictated"), text_io.calls)
         self.assertEqual(buf.current_segment, "dictated")
 
-    def test_insert_dictation_prompts_for_paste_when_no_input_is_focused(self):
+    def test_insert_dictation_copies_to_clipboard_when_no_input_is_focused(self):
         buf = TextBuffer()
         text_io = FakeTextIO()
         text_io.can_insert = False
         text_io.confirm_paste = True
         env = TyperInputEnvironment(buf, text_io=text_io)
 
-        env.insert_dictation("dictated")
+        result = env.insert_output_text("dictated")
 
         self.assertEqual(
             text_io.calls,
             [
                 ("can_insert_text",),
                 ("confirm_paste_text", "dictated"),
-                ("paste_text", "dictated"),
             ],
         )
-        self.assertEqual(buf.current_segment, "dictated")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.failure, "copied_to_clipboard")
+        self.assertEqual(result.copied_text, "dictated")
+        self.assertEqual(buf.current_segment, "")
 
     def test_insert_generated_text_reports_cancelled_paste(self):
         text_io = FakeTextIO()

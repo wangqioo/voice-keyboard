@@ -5,13 +5,19 @@ from typing import Callable, ContextManager
 
 from agent.input_environment import ReplacementPlan
 from agent.operation_history import OperationEffect, OperationHistory
+from agent.punctuation import normalize_spoken_punctuation
 from agent.reusable_text_memory import MemoryOperationResult, ReusableTextMemory
 from agent.voice_text_operation import VoiceTextOperation
 
-_WRITE_SYSTEM = """你是一个写作助手。根据用户的要求直接输出所需内容，不要有任何前缀、解释或额外说明。只输出内容本身。不要使用换行，所有内容写成连续的段落。必须使用完整的中文标点符号（逗号、句号、问号、感叹号），不得省略任何标点。"""
+_WRITE_SYSTEM = """你是一个写作助手。根据用户的要求直接输出所需内容，不要有任何前缀、解释或额外说明。只输出内容本身。不要使用换行，所有内容写成连续的段落。必须使用完整的中文标点符号，常用标点包括逗号、句号、冒号、分号、问号、感叹号、破折号、省略号，不得省略任何必要标点。"""
 
 _SENTENCE_END = frozenset('。！？.!?…，,；;')
-_MAX_PENDING = 40
+_LOCAL_BREAK = 28
+_HARD_BREAK = 52
+_CLAUSE_HINTS = (
+    "是", "为", "位于", "也是", "成为", "见证", "拥有", "包括", "以及",
+    "同时", "此外", "其中", "后来", "经过", "始建于", "原为", "则是",
+)
 
 
 class InstructionModeExecutor:
@@ -56,15 +62,15 @@ class InstructionModeExecutor:
         elif operation.kind == "edit":
             self._do_edit(instruction, selected)
         elif operation.kind == "write":
-            self._do_write(instruction, selected)
+            return bool(self._do_write(instruction, selected))
         elif operation.kind == "memo_save":
             self._do_memo_save(operation.key, operation.value, selected)
         elif operation.kind == "memo_recall":
-            self._do_memo_recall(operation.key, selected)
+            return bool(self._do_memo_recall(operation.key, selected))
         elif operation.kind == "memo_delete":
             self._do_memo_delete(operation.key)
         elif operation.kind == "memo_list":
-            self._do_memo_list(selected)
+            return bool(self._do_memo_list(selected))
         else:
             return self._do_chat(instruction, operation)
         return False
@@ -75,15 +81,19 @@ class InstructionModeExecutor:
     def _record_effect(self, effect: OperationEffect) -> None:
         self._history.push(effect)
 
-    def _handle_memory_result(self, result: MemoryOperationResult, selected: str = "") -> None:
+    def _handle_memory_result(self, result: MemoryOperationResult, selected: str = "") -> bool:
         if result.action == "insert":
             insertion = self._env.insert_generated_text(result.text)
             if insertion.ok and insertion.inserted_text:
                 self._record_effect(OperationEffect.insert(insertion.inserted_text))
             elif insertion.failure == "no_focused_input":
                 self._show("未点击到输入框，已取消输出")
+            elif insertion.failure == "copied_to_clipboard":
+                self._show_copied(insertion.copied_text or result.text)
+                return True
         else:
             self._show(result.message)
+        return False
 
     def _do_chat(self, text: str, operation: VoiceTextOperation) -> bool:
         reply = operation.reply
@@ -162,8 +172,13 @@ class InstructionModeExecutor:
                 )
         return ReplacementPlan(target_text=window_text, replacement_text="")
 
-    def _do_write(self, instruction: str, selected: str) -> None:
-        write_instruction = instruction + "（必须加上完整的中文标点符号，包括逗号和句号，不得省略）"
+    def _do_write(self, instruction: str, selected: str) -> bool:
+        write_instruction = (
+            instruction
+            + "（必须加上完整的中文标点符号，包括逗号、句号、冒号、感叹号、问号、破折号、省略号；"
+            + "出现“例如、比如、包括、如下”这类引出举例或列表的词时，后面优先使用冒号；"
+            + "每20到35个汉字至少使用一个逗号或句号，禁止输出无标点长段。）"
+        )
         pending = ""
         total = ""
         try:
@@ -173,37 +188,53 @@ class InstructionModeExecutor:
                 while True:
                     idx = next((i for i, c in enumerate(pending) if c in _SENTENCE_END), -1)
                     if idx == -1:
-                        if len(pending) >= _MAX_PENDING:
-                            insertion = self._env.insert_generated_text(pending)
+                        forced = _forced_punctuation_break(pending)
+                        if forced is not None:
+                            emit, pending = forced
+                            insertion = self._env.insert_generated_text(
+                                normalize_spoken_punctuation(emit)
+                            )
                             if insertion.ok:
                                 total += insertion.inserted_text
                             elif insertion.failure == "no_focused_input":
                                 self._show("未点击到输入框，已取消输出")
-                                return
-                            pending = ""
+                                return False
+                            elif insertion.failure == "copied_to_clipboard":
+                                self._show_copied(insertion.copied_text or emit)
+                                return True
                         break
                     sentence = pending[:idx + 1]
                     pending = pending[idx + 1:]
-                    insertion = self._env.insert_generated_text(sentence)
+                    insertion = self._env.insert_generated_text(
+                        normalize_spoken_punctuation(sentence)
+                    )
                     if insertion.ok:
                         total += insertion.inserted_text
                     elif insertion.failure == "no_focused_input":
                         self._show("未点击到输入框，已取消输出")
-                        return
+                        return False
+                    elif insertion.failure == "copied_to_clipboard":
+                        self._show_copied(insertion.copied_text or sentence)
+                        return True
         except Exception as e:
             print(f"[ai] 写作失败: {e}")
-            return
+            return False
 
         if pending.strip():
-            insertion = self._env.insert_generated_text(pending)
+            tail = _finish_write_tail(pending)
+            insertion = self._env.insert_generated_text(tail)
             if insertion.ok:
                 total += insertion.inserted_text
             elif insertion.failure == "no_focused_input":
                 self._show("未点击到输入框，已取消输出")
-                return
+                return False
+            elif insertion.failure == "copied_to_clipboard":
+                self._show_copied(insertion.copied_text or tail)
+                return True
 
         if total:
             self._record_effect(OperationEffect.insert(total))
+        return False
 
     def _do_delete(self, instruction: str, selected: str) -> None:
         window = self._operation_window_or_prompt("删除", "删除")
@@ -256,11 +287,56 @@ class InstructionModeExecutor:
     def _do_memo_save(self, key: str, value: str, selected: str) -> None:
         self._handle_memory_result(self._memory.save(key, value, selected), selected)
 
-    def _do_memo_recall(self, key: str, selected: str) -> None:
-        self._handle_memory_result(self._memory.recall(key), selected)
+    def _do_memo_recall(self, key: str, selected: str) -> bool:
+        return self._handle_memory_result(self._memory.recall(key), selected)
 
-    def _do_memo_list(self, selected: str) -> None:
-        self._handle_memory_result(self._memory.list_all(), selected)
+    def _do_memo_list(self, selected: str) -> bool:
+        return self._handle_memory_result(self._memory.list_all(), selected)
 
     def _do_memo_delete(self, key: str) -> None:
         self._handle_memory_result(self._memory.delete(key))
+
+    def _show_copied(self, text: str) -> None:
+        preview = str(text or "").replace("\n", " ")[:60]
+        suffix = "…" if len(str(text or "")) > 60 else ""
+        self._show(f"已复制：{preview}{suffix}")
+
+
+def _forced_punctuation_break(text: str) -> tuple[str, str] | None:
+    pending = str(text or "")
+    compact_len = len(pending.strip())
+    if compact_len < _LOCAL_BREAK:
+        return None
+    cut = _find_local_break(pending)
+    if cut is None and compact_len >= _HARD_BREAK:
+        cut = _HARD_BREAK
+    if cut is None:
+        return None
+    left = pending[:cut].strip()
+    right = pending[cut:].lstrip()
+    if not left:
+        return None
+    punctuation = "。" if len(left) >= _HARD_BREAK else "，"
+    return left + punctuation, right
+
+
+def _find_local_break(text: str) -> int | None:
+    window = text[0:min(len(text), _HARD_BREAK)]
+    if not window:
+        return None
+    best = None
+    for hint in _CLAUSE_HINTS:
+        idx = window.find(hint)
+        if idx < 0:
+            continue
+        absolute = idx
+        if absolute > _LOCAL_BREAK:
+            best = absolute if best is None else min(best, absolute)
+    return best
+
+
+def _finish_write_tail(text: str) -> str:
+    tail = normalize_spoken_punctuation(str(text or "").strip())
+    if not tail or tail[-1] in _SENTENCE_END:
+        return tail
+    return tail + "。"
