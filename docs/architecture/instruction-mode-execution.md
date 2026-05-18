@@ -49,7 +49,7 @@ The provider may use the full Operation Window to understand the instruction, bu
 4. Done: move Operation Reversal logic to consume `OperationEffect`.
 5. Done: convert classifier dictionaries into typed Voice Text Operation objects.
 6. Done: move Voice Text Operation execution into `InstructionModeExecutor`.
-7. Done: move Memory Operation rules into `ReusableTextMemory`.
+7. Done: move Reusable Text Operation rules into `ReusableTextMemory`.
 8. Done: model Replacement Plan data for Text Revision and Text Removal.
 9. Done: change provider-facing prompts to request target text inside an Operation Window instead of a complete rewrite of the whole context.
 10. Next: reduce `AIHandler` to runtime orchestration by moving any remaining Instruction Mode execution branching and feedback policy that belongs with Voice Text Operation handling into the executor.

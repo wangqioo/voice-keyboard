@@ -6,7 +6,7 @@ This roadmap uses the domain language from `CONTEXT.md` and the architecture lan
 
 Status: in progress, accepted by ADR-0002 and ADR-0005.
 
-Deepen the module that owns Explicit Selection, Tracked Segment safety, insertion, replacement, deletion, and cursor movement. This is the first priority because Instruction Mode depends on these rules for Text Revision, Text Removal, Text Generation, Memory Operation, and Operation Reversal.
+Deepen the module that owns Explicit Selection, Tracked Segment safety, insertion, replacement, deletion, and cursor movement. This is the first priority because Instruction Mode depends on these rules for Text Revision, Text Removal, Text Generation, Reusable Text Operation, and Operation Reversal.
 
 Initial implementation:
 
@@ -14,13 +14,14 @@ Initial implementation:
 - `agent/text_io.py`
 - `AIHandler` now uses the Input Environment seam for text-side effects.
 - Input Environment now owns Text Revision / Text Removal target lookup and Operation Reversal text effects.
-- Input Environment now owns generated-text insertion around Explicit Selection for Text Generation and Memory Operation output.
+- Input Environment now owns generated-text insertion around Explicit Selection for Text Generation and Reusable Text Operation output.
 - Platform text IO calls now sit behind a small adapter used by the Input Environment implementation.
-- Next targeting work should separate the safe Operation Window from the smaller Operation Target that a provider proposes replacing.
+- Text Revision and Text Removal now prefer Explicit Selection, then the current safe text window exposed by the Input Environment, then safe Tracked Segment fallback.
+- Next targeting work should broaden platform support for focused-field Operation Windows and keep separating that window from the smaller Operation Target that a provider proposes replacing.
 
 ## 2. Instruction Mode Execution
 
-Status: in progress, accepted by ADR-0003.
+Status: in progress, accepted by ADR-0003 and bounded by ADR-0007.
 
 After Input Environment is behind a seam, deepen Instruction Mode around Voice Text Operation execution.
 
@@ -41,8 +42,9 @@ Initial implementation:
 - `AIHandler` now records `OperationEffect` values and Operation Reversal consumes those effects.
 - `AIHandler` now dispatches typed Voice Text Operation values instead of raw classifier dictionaries.
 - Instruction Mode execution now lives behind an executor seam, leaving `AIHandler` focused on runtime orchestration.
-- Memory Operation rules and Reusable Text Memory key matching now live behind a Reusable Text Memory module; the executor only applies insert/show results to the Input Environment.
+- Reusable Text Operation rules and Reusable Text Memory key matching now live behind a Reusable Text Memory module; the executor only applies insert/show results to the Input Environment.
 - Text Revision and Text Removal should move toward structured Replacement Plans instead of full-context rewrites.
+- Atomic Operation Stack support should be a later slice after stack data structures, local risk policy, and executor sequencing exist. Until then, the classifier should ask users to split explicit multi-step instructions.
 
 ## 3. Capture Path
 

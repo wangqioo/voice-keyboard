@@ -16,13 +16,25 @@ _Avoid_: App, editor, textbox
 A user-requested text change or keyboard-style action applied to the current **Input Environment** based on speech.
 _Avoid_: AI command, prompt, agent action
 
+**Atomic Operation Stack**:
+A short ordered stack of **Voice Keyboard Operations** explicitly requested by the user in one spoken instruction.
+_Avoid_: Agent plan, autonomous workflow, implicit operation sequence
+
 **Voice Text Operation**:
 A **Voice Keyboard Operation** that creates, changes, removes, restores, or recalls text in the current **Input Environment**.
 _Avoid_: AI command, voice command, prompt
 
+**High-Risk Operation**:
+A **Voice Keyboard Operation** risk label for actions that may submit, send, delete, overwrite broad content, cross application boundaries, or be hard to reverse.
+_Avoid_: Dangerous command, privileged action
+
 **Dictation**:
 A **Voice Text Operation** that inserts the user's spoken words as text with minimal cleanup.
 _Avoid_: STT result, transcription
+
+**Text Insertion**:
+A **Voice Text Operation** that inserts user-provided or already resolved text into the current **Input Environment**.
+_Avoid_: Dictation Mode, AI writing
 
 **Dictation Mode**:
 The mode where speech is treated as content to insert into the **Input Environment**.
@@ -53,7 +65,7 @@ Text the user has deliberately selected in the **Input Environment**.
 _Avoid_: Selection, selected text
 
 **Operation Window**:
-The maximum text range the **Voice Keyboard Engine** currently considers safe to inspect and use as context for a replacement-style **Voice Text Operation**.
+The current text range the **Voice Keyboard Engine** considers safe to inspect and use as context for a replacement-style **Voice Text Operation**.
 _Avoid_: Prompt context, whole paragraph target
 
 **Operation Target**:
@@ -69,7 +81,7 @@ A **Voice Text Operation** that changes existing text without changing the user'
 _Avoid_: Edit, polish, rewrite
 
 **Text Generation**:
-A **Voice Text Operation** that creates new text from the user's spoken requirements.
+A **Voice Text Operation** that creates insertable text from the user's spoken requirements for the current **Input Environment**.
 _Avoid_: Writing, AI writing
 
 **Text Removal**:
@@ -77,16 +89,28 @@ A **Voice Text Operation** that deletes an **Explicit Selection** or a safe **Tr
 _Avoid_: Delete command
 
 **Operation Reversal**:
-A **Voice Text Operation** that restores the previous state affected by the last reversible engine operation.
+A **Voice Text Operation** that restores the previous state affected by the last reversible **Voice Keyboard Operation**.
 _Avoid_: Undo, Ctrl+Z
 
 **Shortcut Invocation**:
 A **Voice Keyboard Operation** that triggers a named system or application shortcut.
-_Avoid_: Command, hotkey command
+_Avoid_: Macro, command, hotkey command
 
-**Memory Operation**:
+**Shortcut Catalog**:
+A local catalog of named user-visible shortcut actions available for the current system or application context.
+_Avoid_: Provider-generated shortcut list, freeform hotkey map
+
+**Global Shortcut Catalog**:
+A **Shortcut Catalog** for common system or broadly reusable shortcut actions.
+_Avoid_: Default hotkey dump
+
+**Application Shortcut Catalog**:
+A **Shortcut Catalog** for named shortcut actions in the current application context.
+_Avoid_: App macro list, provider shortcut guess
+
+**Reusable Text Operation**:
 A **Voice Text Operation** that saves, recalls, deletes, or lists user-provided reusable text snippets.
-_Avoid_: Memo feature, memory command
+_Avoid_: Memory Operation, memo feature, memory command
 
 **Reusable Text Memory**:
 A short user-provided text snippet saved for later insertion into the **Input Environment**.
@@ -99,18 +123,34 @@ _Avoid_: STT provider, LLM provider, model, backend
 ## Relationships
 
 - A **Voice Keyboard Engine** acts on exactly one current **Input Environment** at a time.
+- A **Voice Keyboard Operation** is atomic at the user-visible workflow level.
+- Internal implementation steps do not make a **Voice Keyboard Operation** non-atomic when they serve one user-visible intent.
 - **Dictation** is one kind of **Voice Text Operation**, and every **Voice Text Operation** is a **Voice Keyboard Operation**.
+- **Dictation** produces a **Text Insertion** from recognized speech.
 - **Dictation Mode** produces **Dictation**.
 - **Instruction Mode** interprets speech as a request for a **Voice Keyboard Operation**.
+- **Atomic Operation Stack** belongs to **Instruction Mode**; **Dictation Mode** does not participate in stacks.
 - A **Capture Path** supplies speech to either **Dictation Mode** or **Instruction Mode**.
 - A **Software Capture Path** and a **Hardware Capture Path** are both **Capture Paths**.
-- An **Explicit Selection** takes precedence over a **Tracked Segment** for operations that modify existing text.
+- An **Explicit Selection** takes precedence for operations that modify existing text.
+- When there is no **Explicit Selection**, the default **Operation Window** is the current safe text range exposed by the **Input Environment**.
 - A **Tracked Segment** can be modified only while the engine still considers it safe.
 - An **Operation Window** is context for a replacement-style operation; it is not automatically the **Operation Target**.
 - A **Replacement Plan** must be checked against the current **Operation Window** before the engine applies it.
-- **Instruction Mode** may produce a **Text Revision**, **Text Generation**, **Text Removal**, **Operation Reversal**, **Shortcut Invocation**, or **Memory Operation**.
+- **Instruction Mode** may produce a **Text Revision**, **Text Generation**, **Text Removal**, **Operation Reversal**, **Shortcut Invocation**, or **Reusable Text Operation**.
 - A **Shortcut Invocation** is a **Voice Keyboard Operation** but not a **Voice Text Operation** unless it changes text in the **Input Environment**.
-- A **Memory Operation** acts on **Reusable Text Memory**.
+- **Shortcut Invocation** is a core operation type; app-aware shortcut catalogs are an implementation capability.
+- A **Shortcut Invocation** is atomic when it names one user-visible shortcut action, even if the implementation sends multiple low-level key events.
+- **Shortcut Invocation** should target a named action from a local **Shortcut Catalog**.
+- A **Speech Interpretation Provider** may choose from a **Shortcut Catalog** but should not invent shortcut actions or key sequences.
+- A **Global Shortcut Catalog** supplies common actions; an **Application Shortcut Catalog** supplies current-application actions.
+- When shortcut names conflict, the **Application Shortcut Catalog** takes precedence over the **Global Shortcut Catalog**.
+- A **Reusable Text Operation** acts on **Reusable Text Memory**.
+- **Text Generation** is core only when the generated text is meant to enter the **Input Environment**.
+- **Text Insertion** inserts text that is already provided or resolved; **Text Generation** creates new insertable text from requirements.
+- **Reusable Text Operation** recall may produce a **Text Insertion** after it resolves a saved text snippet.
+- **High-Risk Operation** is an execution policy label, not a separate operation type.
+- Auxiliary feedback is not a core **Voice Keyboard Operation** unless it changes or drives the current **Input Environment**.
 - A **Voice Keyboard Engine** may rely on a **Speech Interpretation Provider** but does not own that provider's account, billing, quota, or model lifecycle.
 - **Voice Keyboard Engine** does not own account, subscription, payment, or cloud entitlement concepts.
 
@@ -125,10 +165,12 @@ _Avoid_: STT provider, LLM provider, model, backend
 - The project was described as "voice typing"; resolved: the broader intent is **Voice Keyboard Operation**, with **Dictation** as one text operation type.
 - "AI key mode" was used for intent-driven behavior; resolved: the domain term is **Instruction Mode** because AI is an implementation detail.
 - "AI-native" can overstate the product identity; resolved: the product is a general-purpose voice-driven keyboard efficiency layer, and AI is only one implementation technique for interpreting speech into user operations.
+- "operation sequence" would make permissions, confirmation, and rollback too broad for the current product; resolved: allow only an **Atomic Operation Stack** of user-explicit operations, not autonomous planning.
 - "hardware mode" and "software mode" were used as product modes; resolved: they are **Capture Path** variants, not separate operation modes.
 - `TextBuffer`, `current_segment`, and `cursor_uncertain` are implementation terms; resolved: the domain terms are **Tracked Segment** and safe/unsafe operation on it.
 - "operation object" can mean either the safe context range or the text actually changed; resolved: use **Operation Window** for the safe context and **Operation Target** for the replace/remove span.
-- "chat" exists as an auxiliary response behavior, but is not a core **Voice Text Operation** unless it changes the **Input Environment**.
+- "chat" exists as an auxiliary feedback behavior, but is not a core **Voice Keyboard Operation** unless it changes or drives the **Input Environment**.
+- "memory operation" used to describe reusable snippets; resolved: the domain term is **Reusable Text Operation**, while implementation may still use `memo` names.
 - "memory" is limited to **Reusable Text Memory**; it does not mean chat memory, user profiling, cross-device knowledge sync, or a personal knowledge base.
 - Provider names such as Xunfei, OpenAI, Aliyun, Volcengine, ZhipuAI, and TypeUp Backend are integration choices, not domain terms.
 - "Agent" names a local process and code package, not a domain concept; resolved: domain language uses **Voice Keyboard Engine**.
