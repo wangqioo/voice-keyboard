@@ -1,7 +1,13 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from agent.input_environment import ReversalResult, TextInsertionResult, TyperInputEnvironment
+from agent.input_environment import (
+    OperationWindowLookupResult,
+    ReplacementPlan,
+    ReversalResult,
+    TextInsertionResult,
+    TyperInputEnvironment,
+)
 from agent.input_environment import TargetLookupResult, TextTarget
 from agent.instruction_executor import InstructionModeExecutor
 from agent.operation_history import OperationEffect, OperationHistory
@@ -24,9 +30,62 @@ class InstructionModeExecutorTests(unittest.TestCase):
         ):
             executor.execute(VoiceTextOperation("edit"), "改成 earth", "world")
 
-        replace_selection.assert_called_once_with("earth")
+        replace_selection.assert_called_once_with("earth", original="world")
         self.assertEqual(buf.current_segment, "hello earth")
         self.assertEqual(history.snapshot(), (OperationEffect.replace("world", "earth"),))
+
+    def test_selected_edit_uses_structured_replacement_plan_for_subtarget(self):
+        buf = TextBuffer()
+        buf.push("hello world")
+        llm = MagicMock()
+        llm.plan_replacement.return_value = ReplacementPlan(
+            target_text="world",
+            replacement_text="earth",
+        )
+        history = OperationHistory()
+        executor = InstructionModeExecutor(llm, TyperInputEnvironment(buf), history)
+
+        with (
+            patch("agent.typer.get_selection", return_value="hello world"),
+            patch("agent.typer.replace_selection") as replace_selection,
+        ):
+            executor.execute(VoiceTextOperation("edit"), "把 world 改成 earth", "")
+
+        llm.plan_replacement.assert_called_once_with("hello world", "把 world 改成 earth")
+        llm.edit.assert_not_called()
+        replace_selection.assert_called_once_with("hello earth", original="hello world")
+        self.assertEqual(buf.current_segment, "hello earth")
+        self.assertEqual(
+            history.snapshot(),
+            (OperationEffect.replace("hello world", "hello earth"),),
+        )
+
+    def test_ambiguous_replacement_plan_does_not_mutate_text(self):
+        buf = TextBuffer()
+        buf.push("hello hello")
+        llm = MagicMock()
+        llm.plan_replacement.return_value = ReplacementPlan(
+            target_text="hello",
+            replacement_text="hi",
+        )
+        history = OperationHistory()
+        messages = []
+        executor = InstructionModeExecutor(
+            llm,
+            TyperInputEnvironment(buf),
+            history,
+            show=messages.append,
+        )
+
+        with (
+            patch("agent.typer.get_selection", return_value="hello hello"),
+            patch("agent.typer.replace_selection") as replace_selection,
+        ):
+            executor.execute(VoiceTextOperation("edit"), "改一个 hello", "")
+
+        replace_selection.assert_not_called()
+        self.assertEqual(history.snapshot(), ())
+        self.assertEqual(messages, ["没有找到明确可替换的内容"])
 
     def test_selected_delete_uses_controlled_delete_and_records_effect(self):
         buf = TextBuffer()
@@ -36,13 +95,65 @@ class InstructionModeExecutorTests(unittest.TestCase):
 
         with (
             patch("agent.typer.get_selection", return_value="world"),
-            patch("agent.typer.delete_selection") as delete_selection,
+            patch("agent.typer.replace_selection") as replace_selection,
         ):
             executor.execute(VoiceTextOperation("delete"), "删掉", "world")
 
-        delete_selection.assert_called_once_with()
+        replace_selection.assert_called_once_with("", original="world")
         self.assertEqual(buf.current_segment, "hello ")
         self.assertEqual(history.snapshot(), (OperationEffect.delete("world"),))
+
+    def test_delete_uses_structured_replacement_plan_for_subtarget(self):
+        buf = TextBuffer()
+        buf.push("hello world")
+        llm = MagicMock()
+        llm.plan_replacement.return_value = ReplacementPlan(
+            target_text="world",
+            replacement_text="ignored",
+        )
+        history = OperationHistory()
+        executor = InstructionModeExecutor(llm, TyperInputEnvironment(buf), history)
+
+        with (
+            patch("agent.typer.get_selection", return_value="hello world"),
+            patch("agent.typer.replace_selection") as replace_selection,
+        ):
+            executor.execute(VoiceTextOperation("delete"), "删掉 world", "")
+
+        llm.plan_replacement.assert_called_once_with("hello world", "删掉 world")
+        replace_selection.assert_called_once_with("hello ", original="hello world")
+        self.assertEqual(buf.current_segment, "hello ")
+        self.assertEqual(
+            history.snapshot(),
+            (OperationEffect.replace("hello world", "hello "),),
+        )
+
+    def test_delete_with_ambiguous_replacement_plan_does_not_mutate_text(self):
+        buf = TextBuffer()
+        buf.push("hello hello")
+        llm = MagicMock()
+        llm.plan_replacement.return_value = ReplacementPlan(
+            target_text="hello",
+            replacement_text="",
+        )
+        history = OperationHistory()
+        messages = []
+        executor = InstructionModeExecutor(
+            llm,
+            TyperInputEnvironment(buf),
+            history,
+            show=messages.append,
+        )
+
+        with (
+            patch("agent.typer.get_selection", return_value="hello hello"),
+            patch("agent.typer.replace_selection") as replace_selection,
+        ):
+            executor.execute(VoiceTextOperation("delete"), "删掉一个 hello", "")
+
+        replace_selection.assert_not_called()
+        self.assertEqual(history.snapshot(), ())
+        self.assertEqual(messages, ["没有找到明确可删除的内容"])
 
     def test_undo_reverses_latest_insert_effect(self):
         history = OperationHistory()
@@ -70,6 +181,7 @@ class InstructionModeExecutorTests(unittest.TestCase):
 
         with (
             patch("agent.typer.get_selection", return_value="old"),
+            patch("agent.typer.has_focused_text_input", return_value=True),
             patch("agent.typer.jump_to_end") as jump_to_end,
             patch("agent.typer.type_text") as type_text,
         ):
@@ -115,7 +227,9 @@ class InstructionModeExecutorTests(unittest.TestCase):
     def test_unsafe_tracked_segment_edit_does_not_call_llm(self):
         llm = MagicMock()
         env = MagicMock()
-        env.target_for_revision.return_value = TargetLookupResult.failed("unsafe_tracked_segment")
+        env.operation_window_for_instruction.return_value = OperationWindowLookupResult.failed(
+            "unsafe_tracked_segment"
+        )
         messages = []
         executor = InstructionModeExecutor(
             llm,

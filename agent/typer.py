@@ -1,6 +1,7 @@
 import platform
 import subprocess
 import time
+from dataclasses import dataclass
 from pynput.keyboard import Controller, Key, KeyCode
 
 _kb = Controller()
@@ -58,6 +59,19 @@ _simulating: bool = False   # 程序自己发 Cmd+C/V 等按键时置 True，让
 _use_clipboard_mode: bool = False
 
 
+@dataclass(frozen=True)
+class ActiveApplication:
+    name: str = ""
+    bundle_id: str = ""
+    pid: int | None = None
+
+    @property
+    def label(self) -> str:
+        if self.name and self.bundle_id:
+            return f"{self.name} ({self.bundle_id})"
+        return self.name or self.bundle_id or "未知活动应用"
+
+
 def init(cfg: dict) -> None:
     """由 main.py 在启动时调用，根据 config.yaml 的 typing.method 配置打字方式。"""
     global _use_clipboard_mode
@@ -65,6 +79,9 @@ def init(cfg: dict) -> None:
     if _use_clipboard_mode:
         print("[typer] 剪贴板粘贴模式（适合微信等应用）")
     _load_custom_shortcuts(cfg.get("shortcuts", {}))
+    _APP_SHORTCUTS.clear()
+    app_shortcuts = cfg.get("experimental_app_shortcuts", cfg.get("app_shortcuts", {}))
+    _load_app_shortcuts(app_shortcuts)
 
 
 def is_erasing() -> bool:
@@ -95,6 +112,7 @@ _SYSTEM_ACTIONS = {
     "系统设置": "open_system_settings",
     "打开设置": "open_system_settings",
 }
+_APP_SHORTCUTS: dict[str, dict[str, list]] = {}
 
 # Windows / Linux 下替换修饰键（两者快捷键基本相同）
 if _OS in ("Windows", "Linux"):
@@ -119,7 +137,10 @@ def type_text(text: str) -> None:
     if not text:
         return
     if _OS == "Darwin":
-        _type_via_quartz(text)
+        if _use_clipboard_mode:
+            replace_selection(text)
+        else:
+            _type_via_quartz(text)
     elif _OS == "Windows":
         if _use_clipboard_mode:
             _type_via_clipboard_win(text)
@@ -130,31 +151,157 @@ def type_text(text: str) -> None:
 
 
 def has_focused_text_input() -> bool:
-    """Best-effort focus check before emitting text.
-
-    Platform APIs expose this unevenly. Returning True keeps existing behavior
-    where focus detection is unavailable; macOS uses Accessibility attributes.
-    """
+    """Best-effort focus check before emitting text."""
     if _OS != "Darwin":
         return True
     try:
         app = NSWorkspace.sharedWorkspace().frontmostApplication()
         pid = app.processIdentifier() if app is not None else None
         if not pid:
-            return True
+            print("[typer] focus check: no frontmost app")
+            return False
+        app_name = str(app.localizedName() or "")
+        bundle_id = str(app.bundleIdentifier() or "")
         elem = ApplicationServices.AXUIElementCreateApplication(pid)
         err, focused = ApplicationServices.AXUIElementCopyAttributeValue(elem, "AXFocusedUIElement", None)
         if err != 0 or focused is None:
-            return True
+            if _allows_typing_without_focused_element(bundle_id, app_name):
+                print(
+                    f"[typer] focus check: {app_name} no focused element err={err}, "
+                    "allowed by app fallback"
+                )
+                return True
+            print(f"[typer] focus check: {app_name} no focused element err={err}")
+            return False
         err, role = ApplicationServices.AXUIElementCopyAttributeValue(focused, "AXRole", None)
         if err != 0:
-            return True
+            print(f"[typer] focus check: {app_name} no role err={err}")
+            return False
         role_name = str(role)
-        if role_name in {"AXTextField", "AXTextArea", "AXTextView", "AXComboBox"}:
-            return True
+        subrole = _ax_string(focused, "AXSubrole")
+        description = _ax_string(focused, "AXDescription")
+        settable_value = _ax_settable(focused, "AXValue")
+        settable_range = _ax_settable(focused, "AXSelectedTextRange")
+        ok = (
+            role_name in {"AXTextField", "AXTextArea", "AXTextView", "AXComboBox"}
+            and (settable_value or settable_range)
+            and not _looks_like_browser_document(bundle_id, role_name, subrole, description)
+        )
+        print(
+            "[typer] focus check: "
+            f"app={app_name!r} bundle={bundle_id!r} role={role_name!r} "
+            f"subrole={subrole!r} desc={description!r} "
+            f"value_settable={settable_value} range_settable={settable_range} ok={ok}"
+        )
+        return ok
+    except Exception as e:
+        print(f"[typer] focus check failed: {e}")
         return False
+
+
+def _ax_string(element, attr: str) -> str:
+    try:
+        err, value = ApplicationServices.AXUIElementCopyAttributeValue(element, attr, None)
+        return str(value) if err == 0 and value is not None else ""
     except Exception:
+        return ""
+
+
+def _ax_settable(element, attr: str) -> bool:
+    try:
+        err, value = ApplicationServices.AXUIElementIsAttributeSettable(element, attr, None)
+        return err == 0 and bool(value)
+    except Exception:
+        return False
+
+
+def _focused_accessibility_element():
+    if _OS != "Darwin":
+        return None
+    try:
+        app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        pid = app.processIdentifier() if app is not None else None
+        if not pid:
+            return None
+        root = ApplicationServices.AXUIElementCreateApplication(pid)
+        err, focused = ApplicationServices.AXUIElementCopyAttributeValue(root, "AXFocusedUIElement", None)
+        return focused if err == 0 else None
+    except Exception:
+        return None
+
+
+def _frontmost_app_identity() -> tuple[str, str, int | None]:
+    if _OS != "Darwin":
+        return "", "", None
+    try:
+        app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        if app is None:
+            return "", "", None
+        return (
+            str(app.localizedName() or ""),
+            str(app.bundleIdentifier() or ""),
+            app.processIdentifier(),
+        )
+    except Exception:
+        return "", "", None
+
+
+def current_application() -> ActiveApplication:
+    name, bundle_id, pid = _frontmost_app_identity()
+    return ActiveApplication(name=name, bundle_id=bundle_id, pid=pid)
+
+
+def _frontmost_app_is_codex() -> bool:
+    app_name, bundle_id, _pid = _frontmost_app_identity()
+    identity = f"{app_name} {bundle_id}".lower()
+    return "codex" in identity
+
+
+def _get_accessibility_selection() -> str:
+    focused = _focused_accessibility_element()
+    if focused is None:
+        return ""
+    for attr in ("AXSelectedText", "AXSelectedTextRanges"):
+        try:
+            err, value = ApplicationServices.AXUIElementCopyAttributeValue(focused, attr, None)
+        except Exception:
+            continue
+        if err == 0 and value is not None:
+            text = str(value)
+            if text and not text.startswith("("):
+                return text
+    return ""
+
+
+def _looks_like_browser_document(bundle_id: str, role: str, subrole: str, description: str) -> bool:
+    browser_bundles = {
+        "com.google.Chrome",
+        "com.google.Chrome.canary",
+        "com.microsoft.edgemac",
+        "com.apple.Safari",
+        "org.mozilla.firefox",
+    }
+    if bundle_id not in browser_bundles:
+        return False
+    text = " ".join([role, subrole, description]).lower()
+    return any(marker in text for marker in ("web", "html", "document", "网页", "内容"))
+
+
+def _allows_typing_without_focused_element(bundle_id: str, app_name: str) -> bool:
+    bundle = bundle_id.lower()
+    name = app_name.lower()
+    allow_markers = (
+        "lark", "feishu", "wechat", "weixin", "wxwork", "wecom",
+        "dingtalk", "dingding", "slack", "discord", "telegram",
+        "notion", "obsidian", "vscode", "cursor", "trae", "codex",
+    )
+    allow_names = (
+        "飞书", "微信", "企业微信", "钉钉", "语雀", "腾讯会议",
+        "飞项", "飞连", "石墨", "幕布",
+    )
+    if any(marker in bundle or marker in name for marker in allow_markers):
         return True
+    return any(label in app_name for label in allow_names)
 
 
 def confirm_paste_without_focused_input(text: str) -> bool:
@@ -334,6 +481,12 @@ def get_current_line() -> str | None:
 _SENTINEL = "__VOICE_KEYBOARD_NO_SELECTION_SENTINEL__"
 
 
+@dataclass(frozen=True)
+class CaretTextWindow:
+    text: str
+    source: str
+
+
 def get_selection() -> str:
     """
     读取当前鼠标选中的文字。
@@ -342,6 +495,10 @@ def get_selection() -> str:
     用 sentinel 而非 old_clip 比较，避免选中内容和剪贴板原内容相同时误判为空。
     """
     try:
+        ax_selected = _get_accessibility_selection()
+        if ax_selected:
+            print(f"[typer] AX selection: {ax_selected[:40]!r}")
+            return ax_selected
         old_clip = _get_clipboard()
         _set_clipboard(_SENTINEL)
         time.sleep(0.05)
@@ -361,8 +518,214 @@ def get_selection() -> str:
         return ""
 
 
-def replace_selection(text: str) -> None:
+def get_caret_text_window(max_chars: int = 600) -> CaretTextWindow | None:
+    """Return a small AX text window around the caret when the platform exposes it."""
+    if _OS != "Darwin":
+        return None
+    focused = _focused_accessibility_element()
+    if focused is None:
+        return None
+    try:
+        err, value = ApplicationServices.AXUIElementCopyAttributeValue(
+            focused,
+            "AXValue",
+            None,
+        )
+        if err != 0 or value is None:
+            return None
+        text = str(value)
+        selected_range = _get_accessibility_selected_range(focused)
+        if selected_range is None:
+            return None
+        caret = selected_range[0]
+        if selected_range[1] > 0:
+            caret = selected_range[0] + selected_range[1]
+        caret = max(0, min(caret, len(text)))
+        return _slice_caret_text_window(text, caret, max_chars=max_chars)
+    except Exception as e:
+        print(f"[typer] get_caret_text_window 失败: {e}")
+        return None
+
+
+_SENTENCE_BOUNDARIES = frozenset("。！？!?…\n")
+_PARAGRAPH_BOUNDARIES = frozenset("\n\r")
+
+
+def _slice_caret_text_window(
+    text: str,
+    caret: int,
+    max_chars: int = 600,
+) -> CaretTextWindow | None:
+    if not text:
+        return None
+    sentence = _slice_around_caret(text, caret, _SENTENCE_BOUNDARIES)
+    if sentence:
+        return CaretTextWindow(_limit_window(sentence, max_chars), "caret_sentence")
+    paragraph = _slice_around_caret(text, caret, _PARAGRAPH_BOUNDARIES)
+    if paragraph:
+        return CaretTextWindow(_limit_window(paragraph, max_chars), "caret_paragraph")
+    start = max(0, caret - max_chars // 2)
+    end = min(len(text), start + max_chars)
+    return CaretTextWindow(text[start:end].strip(), "caret_neighborhood")
+
+
+def _slice_around_caret(text: str, caret: int, boundaries: frozenset[str]) -> str:
+    left = caret
+    while left > 0 and text[left - 1] not in boundaries:
+        left -= 1
+    right = caret
+    while right < len(text) and text[right] not in boundaries:
+        right += 1
+    if right < len(text) and text[right] in _SENTENCE_BOUNDARIES:
+        right += 1
+    return text[left:right].strip()
+
+
+def _limit_window(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].strip()
+
+
+def _get_accessibility_selected_range(element):
+    try:
+        err, value = ApplicationServices.AXUIElementCopyAttributeValue(
+            element,
+            "AXSelectedTextRange",
+            None,
+        )
+        if err != 0 or value is None:
+            return None
+        cf_range = ApplicationServices.CFRange()
+        ok = ApplicationServices.AXValueGetValue(
+            value,
+            ApplicationServices.kAXValueCFRangeType,
+            cf_range,
+        )
+        if not ok:
+            return None
+        return int(cf_range.location), int(cf_range.length)
+    except Exception:
+        return None
+
+
+def _set_accessibility_selected_range(element, location: int, length: int = 0) -> bool:
+    try:
+        cf_range = ApplicationServices.CFRangeMake(location, length)
+        value = ApplicationServices.AXValueCreate(
+            ApplicationServices.kAXValueCFRangeType,
+            cf_range,
+        )
+        err = ApplicationServices.AXUIElementSetAttributeValue(
+            element,
+            "AXSelectedTextRange",
+            value,
+        )
+        return err == 0
+    except Exception:
+        return False
+
+
+def _replace_accessibility_selection(
+    text: str,
+    original: str = "",
+    require_original_at_caret: bool = False,
+) -> bool:
+    """Replace the current AX text target before falling back to paste/delete.
+
+    Some rich input environments expose Explicit Selection through
+    Accessibility but lose the OS selection before paste/delete events arrive.
+    When AXValue is settable, editing it directly keeps Instruction Mode
+    replacement/removal tied to the captured Explicit Selection.
+    """
+    if _OS != "Darwin":
+        return False
+    focused = _focused_accessibility_element()
+    if focused is None:
+        print("[typer] AX replacement skipped: no focused element")
+        return False
+    try:
+        err, value = ApplicationServices.AXUIElementCopyAttributeValue(
+            focused,
+            "AXValue",
+            None,
+        )
+        if err != 0 or value is None:
+            print(f"[typer] AX replacement skipped: AXValue err={err} value={value is not None}")
+            return False
+        current = str(value)
+        selected_range = _get_accessibility_selected_range(focused)
+        if selected_range is not None:
+            location, length = selected_range
+            if location < 0 or length < 0 or location > len(current):
+                print(
+                    "[typer] AX replacement skipped: invalid range "
+                    f"location={location} length={length} current_len={len(current)}"
+                )
+                return False
+            if length == 0 and original:
+                location = _find_original_location(
+                    current,
+                    original,
+                    location,
+                    allow_fallback=not require_original_at_caret,
+                )
+                if location < 0:
+                    print("[typer] AX replacement skipped: original not found from caret")
+                    return False
+                length = len(original)
+        elif original:
+            if require_original_at_caret:
+                print("[typer] AX replacement skipped: no caret range for text window")
+                return False
+            location = current.rfind(original)
+            if location < 0:
+                print("[typer] AX replacement skipped: no range and original not found")
+                return False
+            length = len(original)
+        else:
+            print("[typer] AX replacement skipped: no range and no original")
+            return False
+        end = min(len(current), location + length)
+        updated = current[:location] + text + current[end:]
+        err = ApplicationServices.AXUIElementSetAttributeValue(focused, "AXValue", updated)
+        if err != 0:
+            if _set_accessibility_selected_range(focused, location, length):
+                print(f"[typer] AX value set failed err={err}; restored selection for paste")
+                return False
+            print(f"[typer] AX replacement skipped: set AXValue err={err}")
+            return False
+        _set_accessibility_selected_range(focused, location + len(text), 0)
+        print("[typer] AX replacement applied")
+        return True
+    except Exception as e:
+        print(f"[typer] AX replacement failed: {e}")
+        return False
+
+
+def _find_original_location(
+    current: str,
+    original: str,
+    caret: int,
+    allow_fallback: bool = True,
+) -> int:
+    if not original:
+        return -1
+    caret = max(0, min(caret, len(current)))
+    start = caret - len(original)
+    if start >= 0 and current[start:caret] == original:
+        return start
+    if current[caret:caret + len(original)] == original:
+        return caret
+    if not allow_fallback:
+        return -1
+    return current.rfind(original)
+
+
+def replace_selection(text: str, original: str = "") -> None:
     """将 text 写入剪贴板并粘贴，替换当前选中内容（选区失效时在光标处插入）。"""
+    if _replace_accessibility_selection(text, original=original):
+        return
     global _simulating
     _set_clipboard(text)
     time.sleep(0.03)
@@ -386,8 +749,19 @@ def replace_selection(text: str) -> None:
     time.sleep(0.03)
 
 
-def delete_selection() -> None:
+def replace_text_window(original: str, replacement: str) -> bool:
+    """Replace an AX-located text window without clipboard fallback."""
+    return _replace_accessibility_selection(
+        replacement,
+        original=original,
+        require_original_at_caret=True,
+    )
+
+
+def delete_selection(original: str = "") -> None:
     """删除当前选中内容，只发送一次 Backspace，并让热键监听忽略该合成事件。"""
+    if _replace_accessibility_selection("", original=original):
+        return
     global _simulating
     _simulating = True
     try:
@@ -542,17 +916,27 @@ def _set_clipboard_win(text: str) -> None:
 
 def send_shortcut(name: str) -> bool:
     """按名称触发快捷键，返回是否找到该指令"""
+    app = current_application()
+    keys = _app_shortcut(app, name)
+    if keys:
+        print(f"[typer] experimental app shortcut: {app.label} -> {name}")
+        _press_keys(keys)
+        return True
+    keys = _SHORTCUTS.get(name)
+    if keys:
+        _press_keys(keys)
+        return True
     action = _SYSTEM_ACTIONS.get(name)
     if action:
         return _run_system_action(action)
-    keys = _SHORTCUTS.get(name)
-    if not keys:
-        return False
+    return False
+
+
+def _press_keys(keys: list) -> None:
     for k in keys:
         _kb.press(k)
     for k in reversed(keys):
         _kb.release(k)
-    return True
 
 
 def _run_system_action(action: str) -> bool:
@@ -574,7 +958,48 @@ def register_shortcut(name: str, keys: list) -> None:
 
 
 def list_shortcuts() -> list[str]:
-    return list(_SHORTCUTS.keys()) + list(_SYSTEM_ACTIONS.keys())
+    names: list[str] = []
+    app = current_application()
+    for source in (
+        _app_shortcuts_for(app),
+        _SHORTCUTS,
+        _SYSTEM_ACTIONS,
+    ):
+        for name in source:
+            if name not in names:
+                names.append(name)
+    return names
+
+
+def _app_shortcut(app: ActiveApplication, name: str) -> list | None:
+    for shortcuts in _app_shortcut_maps(app):
+        keys = shortcuts.get(name)
+        if keys:
+            return keys
+    return None
+
+
+def _app_shortcuts_for(app: ActiveApplication) -> dict[str, list]:
+    merged: dict[str, list] = {}
+    for shortcuts in reversed(_app_shortcut_maps(app)):
+        merged.update(shortcuts)
+    return merged
+
+
+def _app_shortcut_maps(app: ActiveApplication) -> list[dict[str, list]]:
+    keys = []
+    for value in (app.bundle_id, app.name):
+        if value:
+            keys.append(value)
+            lowered = value.lower()
+            if lowered != value:
+                keys.append(lowered)
+    out = []
+    for key in keys:
+        shortcuts = _APP_SHORTCUTS.get(key)
+        if shortcuts is not None:
+            out.append(shortcuts)
+    return out
 
 
 def _load_custom_shortcuts(shortcuts) -> None:
@@ -590,6 +1015,33 @@ def _load_custom_shortcuts(shortcuts) -> None:
             continue
         if parsed:
             register_shortcut(name.strip(), parsed)
+
+
+def _load_app_shortcuts(app_shortcuts) -> None:
+    if not isinstance(app_shortcuts, dict):
+        return
+    for app_key, shortcuts in app_shortcuts.items():
+        if not isinstance(app_key, str) or not app_key.strip():
+            continue
+        if not isinstance(shortcuts, dict):
+            print(f"[typer] 忽略活动应用快捷键 {app_key!r}: 必须是映射")
+            continue
+        parsed_shortcuts: dict[str, list] = {}
+        for name, keys in shortcuts.items():
+            if not isinstance(name, str) or not name.strip():
+                continue
+            try:
+                parsed = _parse_shortcut_keys(keys)
+            except ValueError as e:
+                print(f"[typer] 忽略活动应用快捷键 {app_key!r}/{name!r}: {e}")
+                continue
+            if parsed:
+                parsed_shortcuts[name.strip()] = parsed
+        if parsed_shortcuts:
+            key = app_key.strip()
+            _APP_SHORTCUTS[key] = parsed_shortcuts
+            _APP_SHORTCUTS[key.lower()] = parsed_shortcuts
+            print(f"[typer] 已加载实验性活动应用快捷键: {key}")
 
 
 def _parse_shortcut_keys(keys) -> list:

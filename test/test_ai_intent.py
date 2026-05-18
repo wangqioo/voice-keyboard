@@ -52,10 +52,25 @@ class AIIntentTests(unittest.TestCase):
 
         result = classify_intent(llm, IntentContext(
             text="保存",
+            active_application="Codex (com.openai.codex)",
             shortcuts=("保存",),
         ))
 
         self.assertEqual(result, {"type": "shortcut", "name": "保存"})
+
+    def test_classifier_prompt_includes_active_application_shortcuts(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"shortcut","name":"发送"}'
+
+        classify_intent(llm, IntentContext(
+            text="发送",
+            active_application="Codex (com.openai.codex)",
+            shortcuts=("发送",),
+        ))
+
+        _system, user = llm.chat.call_args.args
+        self.assertIn("当前活动应用：Codex (com.openai.codex)", user)
+        self.assertIn("当前活动应用可用快捷键（实验性）：发送", user)
 
 
 if __name__ == "__main__":

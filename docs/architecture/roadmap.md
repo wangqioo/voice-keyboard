@@ -4,7 +4,7 @@ This roadmap uses the domain language from `CONTEXT.md` and the architecture lan
 
 ## 1. Input Environment Seam
 
-Status: in progress, accepted by ADR-0002.
+Status: in progress, accepted by ADR-0002 and ADR-0005.
 
 Deepen the module that owns Explicit Selection, Tracked Segment safety, insertion, replacement, deletion, and cursor movement. This is the first priority because Instruction Mode depends on these rules for Text Revision, Text Removal, Text Generation, Memory Operation, and Operation Reversal.
 
@@ -16,6 +16,7 @@ Initial implementation:
 - Input Environment now owns Text Revision / Text Removal target lookup and Operation Reversal text effects.
 - Input Environment now owns generated-text insertion around Explicit Selection for Text Generation and Memory Operation output.
 - Platform text IO calls now sit behind a small adapter used by the Input Environment implementation.
+- Next targeting work should separate the safe Operation Window from the smaller Operation Target that a provider proposes replacing.
 
 ## 2. Instruction Mode Execution
 
@@ -41,6 +42,7 @@ Initial implementation:
 - `AIHandler` now dispatches typed Voice Text Operation values instead of raw classifier dictionaries.
 - Instruction Mode execution now lives behind an executor seam, leaving `AIHandler` focused on runtime orchestration.
 - Memory Operation rules and Reusable Text Memory key matching now live behind a Reusable Text Memory module; the executor only applies insert/show results to the Input Environment.
+- Text Revision and Text Removal should move toward structured Replacement Plans instead of full-context rewrites.
 
 ## 3. Capture Path
 

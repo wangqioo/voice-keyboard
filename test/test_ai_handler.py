@@ -1,9 +1,17 @@
 import unittest
 from unittest.mock import patch
 
-from agent.input_environment import TextInsertionResult, TextTarget, TyperInputEnvironment, UnsafeTrackedSegment
+from agent.input_environment import (
+    OperationWindow,
+    ReplacementPlan,
+    TextInsertionResult,
+    TextTarget,
+    TyperInputEnvironment,
+    UnsafeTrackedSegment,
+)
 from agent.operation_history import OperationEffect
 from agent.text_buffer import TextBuffer
+from agent.text_io import CaretTextWindow
 
 
 class FakeTextIO:
@@ -13,6 +21,8 @@ class FakeTextIO:
         self.shortcuts_value = ["保存"]
         self.can_insert = True
         self.confirm_paste = False
+        self.caret_window = None
+        self.can_replace_text_window = True
 
     def can_insert_text(self) -> bool:
         self.calls.append(("can_insert_text",))
@@ -29,17 +39,25 @@ class FakeTextIO:
         self.calls.append(("get_selection",))
         return self.selected
 
+    def get_caret_text_window(self):
+        self.calls.append(("get_caret_text_window",))
+        return self.caret_window
+
     def type_text(self, text: str) -> None:
         self.calls.append(("type_text", text))
 
     def jump_to_end(self) -> None:
         self.calls.append(("jump_to_end",))
 
-    def replace_selection(self, text: str) -> None:
-        self.calls.append(("replace_selection", text))
+    def replace_selection(self, text: str, original: str = "") -> None:
+        self.calls.append(("replace_selection", text, original))
 
-    def delete_selection(self) -> None:
-        self.calls.append(("delete_selection",))
+    def replace_text_window(self, original: str, replacement: str) -> bool:
+        self.calls.append(("replace_text_window", original, replacement))
+        return self.can_replace_text_window
+
+    def delete_selection(self, original: str = "") -> None:
+        self.calls.append(("delete_selection", original))
 
     def erase_last(self, text: str) -> None:
         self.calls.append(("erase_last", text))
@@ -51,6 +69,10 @@ class FakeTextIO:
     def send_shortcut(self, name: str) -> bool:
         self.calls.append(("send_shortcut", name))
         return name in self.shortcuts_value
+
+    def current_application_label(self) -> str:
+        self.calls.append(("current_application_label",))
+        return "Codex (com.openai.codex)"
 
 
 class InputEnvironmentTests(unittest.TestCase):
@@ -72,6 +94,7 @@ class InputEnvironmentTests(unittest.TestCase):
 
         self.assertEqual(env.shortcuts(), ("保存",))
         self.assertTrue(env.send_shortcut("保存"))
+        self.assertEqual(env.active_application(), "Codex (com.openai.codex)")
 
     def test_insert_after_selection_moves_to_end_once(self):
         buf = TextBuffer()
@@ -152,6 +175,7 @@ class InputEnvironmentTests(unittest.TestCase):
 
         with (
             patch("agent.typer.get_selection", return_value="old"),
+            patch("agent.typer.has_focused_text_input", return_value=True),
             patch("agent.typer.jump_to_end") as jump_to_end,
             patch("agent.typer.type_text") as type_text,
         ):
@@ -168,6 +192,7 @@ class InputEnvironmentTests(unittest.TestCase):
 
         with (
             patch("agent.typer.get_selection", return_value=""),
+            patch("agent.typer.has_focused_text_input", return_value=True),
             patch("agent.typer.jump_to_end") as jump_to_end,
             patch("agent.typer.type_text") as type_text,
         ):
@@ -204,9 +229,10 @@ class InputEnvironmentTests(unittest.TestCase):
                 "earth",
             )
 
-        replace_selection.assert_called_once_with("earth")
+        replace_selection.assert_called_once_with("earth", original="world")
         self.assertTrue(result.ok)
         self.assertEqual(result.changed_text, "world")
+        self.assertEqual(result.replacement_text, "earth")
         self.assertEqual(buf.current_segment, "hello earth")
 
     def test_delete_instruction_target_refuses_unsafe_tracked_segment(self):
@@ -267,6 +293,152 @@ class InputEnvironmentTests(unittest.TestCase):
 
         self.assertTrue(result.ok)
         self.assertEqual(result.original_text, "hello")
+
+    def test_operation_window_prefers_explicit_selection(self):
+        buf = TextBuffer()
+        buf.push("hello world")
+        env = TyperInputEnvironment(buf)
+
+        with patch("agent.typer.get_selection", return_value="world"):
+            result = env.operation_window_for_instruction()
+
+        self.assertTrue(result.ok)
+        self.assertIsNotNone(result.window)
+        self.assertEqual(result.window.text, "world")
+        self.assertEqual(result.window.source, "explicit_selection")
+
+    def test_operation_window_uses_caret_window_without_explicit_selection(self):
+        buf = TextBuffer()
+        text_io = FakeTextIO()
+        text_io.caret_window = CaretTextWindow("current sentence.", "caret_sentence")
+        env = TyperInputEnvironment(buf, text_io=text_io)
+
+        result = env.operation_window_for_instruction()
+
+        self.assertTrue(result.ok)
+        self.assertIsNotNone(result.window)
+        self.assertEqual(result.window.text, "current sentence.")
+        self.assertEqual(result.window.source, "caret")
+
+    def test_operation_window_prefers_selection_over_caret_window(self):
+        text_io = FakeTextIO(selected="selected")
+        text_io.caret_window = CaretTextWindow("caret sentence.", "caret_sentence")
+        env = TyperInputEnvironment(TextBuffer(), text_io=text_io)
+
+        result = env.operation_window_for_instruction()
+
+        self.assertTrue(result.ok)
+        self.assertIsNotNone(result.window)
+        self.assertEqual(result.window.text, "selected")
+        self.assertEqual(result.window.source, "explicit_selection")
+
+    def test_replacement_plan_can_replace_subtarget_inside_selected_window(self):
+        buf = TextBuffer()
+        buf.push("hello world")
+        env = TyperInputEnvironment(buf)
+        target = TextTarget(selected="hello world", tracked_segment="hello world")
+        window = OperationWindow("hello world", target, "explicit_selection")
+
+        with patch("agent.typer.replace_selection") as replace_selection:
+            result = env.apply_replacement_plan(
+                window,
+                ReplacementPlan(target_text="world", replacement_text="earth"),
+            )
+
+        replace_selection.assert_called_once_with("hello earth", original="hello world")
+        self.assertTrue(result.ok)
+        self.assertEqual(result.changed_text, "hello world")
+        self.assertEqual(result.replacement_text, "hello earth")
+        self.assertEqual(buf.current_segment, "hello earth")
+
+    def test_replacement_plan_refuses_ambiguous_target(self):
+        buf = TextBuffer()
+        env = TyperInputEnvironment(buf)
+        target = TextTarget(selected="hello hello")
+        window = OperationWindow("hello hello", target, "explicit_selection")
+
+        with patch("agent.typer.replace_selection") as replace_selection:
+            result = env.apply_replacement_plan(
+                window,
+                ReplacementPlan(target_text="hello", replacement_text="hi"),
+            )
+
+        replace_selection.assert_not_called()
+        self.assertFalse(result.ok)
+        self.assertEqual(result.failure, "ambiguous_target")
+
+    def test_replacement_plan_refuses_low_confidence(self):
+        buf = TextBuffer()
+        env = TyperInputEnvironment(buf)
+        target = TextTarget(selected="hello")
+        window = OperationWindow("hello", target, "explicit_selection")
+
+        with patch("agent.typer.replace_selection") as replace_selection:
+            result = env.apply_replacement_plan(
+                window,
+                ReplacementPlan(
+                    target_text="hello",
+                    replacement_text="hi",
+                    confidence="low",
+                ),
+            )
+
+        replace_selection.assert_not_called()
+        self.assertFalse(result.ok)
+        self.assertEqual(result.failure, "low_confidence")
+
+    def test_replacement_plan_uses_controlled_caret_window_replacement(self):
+        text_io = FakeTextIO()
+        env = TyperInputEnvironment(TextBuffer(), text_io=text_io)
+        target = TextTarget()
+        window = OperationWindow("hello world", target, "caret")
+
+        result = env.apply_replacement_plan(
+            window,
+            ReplacementPlan(target_text="world", replacement_text="earth"),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            text_io.calls,
+            [("replace_text_window", "hello world", "hello earth")],
+        )
+
+    def test_replacement_plan_refuses_caret_window_when_controlled_replace_fails(self):
+        text_io = FakeTextIO()
+        text_io.can_replace_text_window = False
+        env = TyperInputEnvironment(TextBuffer(), text_io=text_io)
+        target = TextTarget()
+        window = OperationWindow("hello world", target, "caret")
+
+        result = env.apply_replacement_plan(
+            window,
+            ReplacementPlan(target_text="world", replacement_text="earth"),
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.failure, "target_not_found")
+        self.assertEqual(
+            text_io.calls,
+            [("replace_text_window", "hello world", "hello earth")],
+        )
+
+    def test_replacement_plan_refuses_tracked_segment_subtarget_until_range_io_exists(self):
+        buf = TextBuffer()
+        buf.push("hello world")
+        env = TyperInputEnvironment(buf, require_selection_for_instruction=False)
+        target = TextTarget(tracked_segment="hello world", tracked_segment_safe=True)
+        window = OperationWindow("hello world", target, "tracked_segment")
+
+        with patch("agent.typer.erase_last") as erase_last:
+            result = env.apply_replacement_plan(
+                window,
+                ReplacementPlan(target_text="world", replacement_text="earth"),
+            )
+
+        erase_last.assert_not_called()
+        self.assertFalse(result.ok)
+        self.assertEqual(result.failure, "target_not_found")
 
     def test_apply_reversal_of_insert_erases_text_and_syncs_buffer(self):
         buf = TextBuffer()

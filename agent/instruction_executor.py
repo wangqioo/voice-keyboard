@@ -3,6 +3,7 @@
 from contextlib import nullcontext
 from typing import Callable, ContextManager
 
+from agent.input_environment import ReplacementPlan
 from agent.operation_history import OperationEffect, OperationHistory
 from agent.reusable_text_memory import MemoryOperationResult, ReusableTextMemory
 from agent.voice_text_operation import VoiceTextOperation
@@ -41,7 +42,7 @@ class InstructionModeExecutor:
         elif operation.kind == "undo":
             self._do_undo()
         elif operation.kind == "delete":
-            self._do_delete(selected)
+            self._do_delete(instruction, selected)
         elif operation.kind == "edit":
             self._do_edit(instruction, selected)
         elif operation.kind == "write":
@@ -90,35 +91,68 @@ class InstructionModeExecutor:
         return True
 
     def _do_edit(self, instruction: str, selected: str) -> None:
-        lookup = self._env.target_for_revision()
-        if not lookup.ok:
-            if lookup.failure == "unsafe_tracked_segment":
-                self._show("请先选中你想修改的内容")
-            else:
-                self._show("没有可编辑的内容")
-            return
-        target = lookup.target
-        if target is None:
-            self._show("请先选中你想修改的内容")
+        window = self._operation_window_or_prompt("修改", "编辑")
+        if window is None:
             return
 
         try:
-            corrected = self._llm.edit(lookup.original_text, instruction)
+            plan = self._replacement_plan(window.text, instruction)
         except Exception as e:
             print(f"[ai] 编辑失败: {e}")
             return
-        print(f"[ai] 编辑结果: {corrected!r}")
+        print(
+            "[ai] 替换计划: "
+            f"target={plan.target_text!r} replacement={plan.replacement_text!r}"
+        )
 
         with self._io():
-            if not target.selected:
+            if not window.target.selected:
                 self._clear_pending_output()
-            result = self._env.replace_instruction_target(target, corrected)
+            result = self._env.apply_replacement_plan(window, plan)
         if result.ok:
-            self._record_effect(OperationEffect.replace(result.changed_text, corrected))
+            self._record_effect(
+                OperationEffect.replace(result.changed_text, result.replacement_text)
+            )
         elif result.failure == "unsafe_tracked_segment":
             self._show("请先选中你想修改的内容")
+        elif result.failure in {"target_not_found", "ambiguous_target", "low_confidence"}:
+            self._show("没有找到明确可替换的内容")
         else:
             self._show("没有可编辑的内容")
+
+    def _replacement_plan(self, window_text: str, instruction: str) -> ReplacementPlan:
+        if hasattr(self._llm, "plan_replacement"):
+            plan = self._llm.plan_replacement(window_text, instruction)
+            if isinstance(plan, ReplacementPlan):
+                return plan
+            if isinstance(plan, dict):
+                return ReplacementPlan(
+                    target_text=plan.get("target_text", ""),
+                    replacement_text=plan.get("replacement_text", ""),
+                    confidence=plan.get("confidence", "high"),
+                )
+        corrected = self._llm.edit(window_text, instruction)
+        return ReplacementPlan(
+            target_text=window_text,
+            replacement_text=corrected,
+        )
+
+    def _removal_plan(self, window_text: str, instruction: str) -> ReplacementPlan:
+        if hasattr(self._llm, "plan_replacement"):
+            plan = self._llm.plan_replacement(window_text, instruction)
+            if isinstance(plan, ReplacementPlan):
+                return ReplacementPlan(
+                    target_text=plan.target_text,
+                    replacement_text="",
+                    confidence=plan.confidence,
+                )
+            if isinstance(plan, dict):
+                return ReplacementPlan(
+                    target_text=plan.get("target_text", ""),
+                    replacement_text="",
+                    confidence=plan.get("confidence", "high"),
+                )
+        return ReplacementPlan(target_text=window_text, replacement_text="")
 
     def _do_write(self, instruction: str, selected: str) -> None:
         write_instruction = instruction + "（必须加上完整的中文标点符号，包括逗号和句号，不得省略）"
@@ -163,28 +197,41 @@ class InstructionModeExecutor:
         if total:
             self._record_effect(OperationEffect.insert(total))
 
-    def _do_delete(self, selected: str) -> None:
-        lookup = self._env.target_for_removal()
-        if not lookup.ok:
-            if lookup.failure == "unsafe_tracked_segment":
-                self._show("请先选中你想删除的内容")
-            else:
-                self._show("没有可删除的内容")
+    def _do_delete(self, instruction: str, selected: str) -> None:
+        window = self._operation_window_or_prompt("删除", "删除")
+        if window is None:
             return
-        target = lookup.target
-        if target is None:
-            self._show("请先选中你想删除的内容")
-            return
+        plan = self._removal_plan(window.text, instruction)
         with self._io():
-            if not target.selected:
+            if not window.target.selected:
                 self._clear_pending_output()
-            result = self._env.delete_instruction_target(target)
+            result = self._env.apply_replacement_plan(
+                window,
+                plan,
+            )
         if result.ok:
-            self._record_effect(OperationEffect.delete(result.changed_text))
+            if result.replacement_text:
+                self._record_effect(
+                    OperationEffect.replace(result.changed_text, result.replacement_text)
+                )
+            else:
+                self._record_effect(OperationEffect.delete(result.changed_text))
         elif result.failure == "unsafe_tracked_segment":
             self._show("请先选中你想删除的内容")
+        elif result.failure in {"target_not_found", "ambiguous_target", "low_confidence"}:
+            self._show("没有找到明确可删除的内容")
         else:
             self._show("没有可删除的内容")
+
+    def _operation_window_or_prompt(self, action: str, noun: str):
+        lookup = self._env.operation_window_for_instruction()
+        if not lookup.ok:
+            if lookup.failure == "unsafe_tracked_segment":
+                self._show(f"请先选中你想{action}的内容")
+            else:
+                self._show(f"没有可{noun}的内容")
+            return None
+        return lookup.window
 
     def _do_undo(self) -> None:
         effect = self._history.pop()

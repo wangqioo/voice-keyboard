@@ -2,7 +2,7 @@
 
 ## Repository Intent
 
-This repository contains Voice Keyboard Engine, the local engine that turns speech into text or text operations in the current input environment.
+This repository contains Voice Keyboard Engine, the local voice-driven keyboard efficiency layer that turns speech into text changes or keyboard-style operations in the current input environment.
 
 Use the project language in [CONTEXT.md](CONTEXT.md). The boundary decision is recorded in [docs/adr/0001-voice-keyboard-engine-boundary.md](docs/adr/0001-voice-keyboard-engine-boundary.md).
 
@@ -13,6 +13,7 @@ Do not move account UI, subscriptions, payments, entitlement policy, provider bi
 Prefer these domain terms in documentation and code-level explanations:
 
 - **Voice Keyboard Engine**, not TypeUp Engine or Agent when describing the domain.
+- **Voice Keyboard Operation**, not AI command or prompt when describing a user-requested keyboard-style action.
 - **Dictation Mode**, not normal mode or PTT mode when describing the user intent.
 - **Instruction Mode**, not AI mode when describing intent-driven operations.
 - **Capture Path**, not hardware mode or software mode when describing where speech enters the engine.

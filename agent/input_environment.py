@@ -19,12 +19,34 @@ class TextTarget:
     tracked_segment_safe: bool = True
 
 
-TargetFailure = Literal["unsafe_tracked_segment", "no_tracked_segment", "no_focused_input"]
+@dataclass(frozen=True)
+class OperationWindow:
+    text: str
+    target: TextTarget
+    source: Literal["explicit_selection", "tracked_segment", "caret"]
+
+
+@dataclass(frozen=True)
+class ReplacementPlan:
+    target_text: str
+    replacement_text: str = ""
+    confidence: Literal["high", "medium", "low"] = "high"
+
+
+TargetFailure = Literal[
+    "unsafe_tracked_segment",
+    "no_tracked_segment",
+    "no_focused_input",
+    "target_not_found",
+    "ambiguous_target",
+    "low_confidence",
+]
 
 
 @dataclass(frozen=True)
 class TargetChangeResult:
     changed_text: str = ""
+    replacement_text: str = ""
     failure: TargetFailure | None = None
 
     @property
@@ -32,8 +54,8 @@ class TargetChangeResult:
         return self.failure is None
 
     @classmethod
-    def changed(cls, text: str) -> "TargetChangeResult":
-        return cls(changed_text=text)
+    def changed(cls, text: str, replacement: str = "") -> "TargetChangeResult":
+        return cls(changed_text=text, replacement_text=replacement)
 
     @classmethod
     def failed(cls, failure: TargetFailure) -> "TargetChangeResult":
@@ -56,6 +78,24 @@ class TargetLookupResult:
 
     @classmethod
     def failed(cls, failure: TargetFailure) -> "TargetLookupResult":
+        return cls(failure=failure)
+
+
+@dataclass(frozen=True)
+class OperationWindowLookupResult:
+    window: OperationWindow | None = None
+    failure: TargetFailure | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.failure is None
+
+    @classmethod
+    def found(cls, window: OperationWindow) -> "OperationWindowLookupResult":
+        return cls(window=window)
+
+    @classmethod
+    def failed(cls, failure: TargetFailure) -> "OperationWindowLookupResult":
         return cls(failure=failure)
 
 
@@ -107,10 +147,13 @@ class TyperInputEnvironment:
         )
 
     def target_for_revision(self) -> TargetLookupResult:
-        return self._target_for_text_change()
+        return self._target_from_operation_window()
 
     def target_for_removal(self) -> TargetLookupResult:
-        return self._target_for_text_change()
+        return self._target_from_operation_window()
+
+    def operation_window_for_instruction(self) -> OperationWindowLookupResult:
+        return self._operation_window_for_text_change()
 
     def insert_text(self, text: str) -> None:
         self._text_io.type_text(text)
@@ -145,11 +188,11 @@ class TyperInputEnvironment:
         return self.insert_output_text(text)
 
     def replace_selection(self, original: str, replacement: str) -> None:
-        self._text_io.replace_selection(replacement)
+        self._text_io.replace_selection(replacement, original=original)
         self._sync_selected_replacement(original, replacement)
 
     def delete_selection(self, original: str) -> None:
-        self._text_io.delete_selection()
+        self._text_io.delete_selection(original=original)
         self._sync_selected_replacement(original, "")
 
     def replace_instruction_target(
@@ -159,7 +202,7 @@ class TyperInputEnvironment:
     ) -> TargetChangeResult:
         if target.selected:
             self.replace_selection(target.selected, replacement)
-            return TargetChangeResult.changed(target.selected)
+            return TargetChangeResult.changed(target.selected, replacement)
         if not target.tracked_segment_safe:
             return TargetChangeResult.failed("unsafe_tracked_segment")
         if self._require_selection_for_instruction:
@@ -172,7 +215,7 @@ class TyperInputEnvironment:
             return TargetChangeResult.failed("unsafe_tracked_segment")
         except NoTrackedSegment:
             return TargetChangeResult.failed("no_tracked_segment")
-        return TargetChangeResult.changed(target.tracked_segment)
+        return TargetChangeResult.changed(target.tracked_segment, replacement)
 
     def delete_instruction_target(self, target: TextTarget) -> TargetChangeResult:
         if target.selected:
@@ -191,6 +234,51 @@ class TyperInputEnvironment:
         except NoTrackedSegment:
             return TargetChangeResult.failed("no_tracked_segment")
         return TargetChangeResult.changed(target.tracked_segment)
+
+    def apply_replacement_plan(
+        self,
+        window: OperationWindow,
+        plan: ReplacementPlan,
+    ) -> TargetChangeResult:
+        if plan.confidence == "low":
+            return TargetChangeResult.failed("low_confidence")
+        target_text = plan.target_text
+        if not target_text:
+            return TargetChangeResult.failed("target_not_found")
+        occurrences = window.text.count(target_text)
+        if occurrences == 0:
+            return TargetChangeResult.failed("target_not_found")
+        if occurrences > 1:
+            return TargetChangeResult.failed("ambiguous_target")
+
+        if window.source == "explicit_selection":
+            replacement = window.text.replace(
+                target_text,
+                plan.replacement_text,
+                1,
+            )
+            self.replace_selection(window.text, replacement)
+            return TargetChangeResult.changed(window.text, replacement)
+
+        if window.source == "caret":
+            replacement = window.text.replace(
+                target_text,
+                plan.replacement_text,
+                1,
+            )
+            if not self._text_io.replace_text_window(window.text, replacement):
+                return TargetChangeResult.failed("target_not_found")
+            self._sync_selected_replacement(window.text, replacement)
+            return TargetChangeResult.changed(window.text, replacement)
+
+        if not window.target.tracked_segment_safe:
+            return TargetChangeResult.failed("unsafe_tracked_segment")
+        if self._require_selection_for_instruction:
+            return TargetChangeResult.failed("no_tracked_segment")
+        if target_text != window.text:
+            return TargetChangeResult.failed("target_not_found")
+        self.replace_tracked_segment(target_text, plan.replacement_text)
+        return TargetChangeResult.changed(target_text, plan.replacement_text)
 
     def replace_tracked_segment(self, original: str, replacement: str) -> None:
         self._ensure_tracked_segment(original)
@@ -238,23 +326,55 @@ class TyperInputEnvironment:
     def send_shortcut(self, name: str) -> bool:
         return self._text_io.send_shortcut(name)
 
+    def active_application(self) -> str:
+        return self._text_io.current_application_label()
+
     def _ensure_tracked_segment(self, original: str) -> None:
         if self._buf.cursor_uncertain:
             raise UnsafeTrackedSegment("Tracked Segment is unsafe")
         if not original:
             raise NoTrackedSegment("No Tracked Segment")
 
-    def _target_for_text_change(self) -> TargetLookupResult:
+    def _target_from_operation_window(self) -> TargetLookupResult:
+        result = self._operation_window_for_text_change()
+        if not result.ok:
+            return TargetLookupResult.failed(result.failure or "no_tracked_segment")
+        if result.window is None:
+            return TargetLookupResult.failed("no_tracked_segment")
+        return TargetLookupResult.found(result.window.target, result.window.text)
+
+    def _operation_window_for_text_change(self) -> OperationWindowLookupResult:
         target = self.target_for_instruction()
         if target.selected:
-            return TargetLookupResult.found(target, target.selected)
+            return OperationWindowLookupResult.found(
+                OperationWindow(
+                    text=target.selected,
+                    target=target,
+                    source="explicit_selection",
+                )
+            )
+        caret_window = self._text_io.get_caret_text_window()
+        if caret_window is not None and caret_window.text:
+            return OperationWindowLookupResult.found(
+                OperationWindow(
+                    text=caret_window.text,
+                    target=target,
+                    source="caret",
+                )
+            )
         if self._require_selection_for_instruction:
-            return TargetLookupResult.failed("no_tracked_segment")
+            return OperationWindowLookupResult.failed("no_tracked_segment")
         if not target.tracked_segment_safe:
-            return TargetLookupResult.failed("unsafe_tracked_segment")
+            return OperationWindowLookupResult.failed("unsafe_tracked_segment")
         if not target.tracked_segment:
-            return TargetLookupResult.failed("no_tracked_segment")
-        return TargetLookupResult.found(target, target.tracked_segment)
+            return OperationWindowLookupResult.failed("no_tracked_segment")
+        return OperationWindowLookupResult.found(
+            OperationWindow(
+                text=target.tracked_segment,
+                target=target,
+                source="tracked_segment",
+            )
+        )
 
     def _sync_selected_replacement(self, selected: str, replacement: str) -> None:
         segment = self._buf.current_segment

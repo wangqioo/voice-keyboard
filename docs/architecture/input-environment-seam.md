@@ -13,6 +13,8 @@ The original friction was that Instruction Mode crossed several shallow interfac
 
 The result was poor locality. The rule "Explicit Selection takes precedence over a Tracked Segment, and unsafe Tracked Segments must not be implicitly modified" was spread across multiple files. The current implementation concentrates these rules in `TyperInputEnvironment`; `TextBuffer` remains an implementation detail inside that adapter.
 
+The next design pressure is more precise: the Input Environment should expose a safe Operation Window without forcing that whole window to become the replacement target. A paragraph, sentence neighborhood, Explicit Selection, or safe Tracked Segment can be provider context, while the actual Operation Target may be a smaller span inside it.
+
 ## Target Module
 
 Introduce an `InputEnvironment` module with one interface for Instruction Mode.
@@ -35,6 +37,8 @@ class TextTarget:
 
 class InputEnvironment:
     def target_for_instruction(self) -> TextTarget: ...
+    def operation_window_for_instruction(self) -> OperationWindow: ...
+    def apply_replacement_plan(self, plan: ReplacementPlan) -> TargetChangeResult: ...
     def insert_text(self, text: str) -> None: ...
     def insert_text_after_selection(self, text: str) -> None: ...
     def insert_generated_text(self, text: str) -> TextInsertionResult: ...
@@ -60,6 +64,8 @@ It owns:
 - a platform text IO adapter that calls into `agent.typer`
 - synchronizing selected replacements back into the Tracked Segment
 - deciding whether a Tracked Segment is safe
+- deciding the maximum safe Operation Window for replacement-style operations
+- verifying that a Replacement Plan only changes text inside the current Operation Window
 - moving to the end before insertion when an Explicit Selection exists
 
 `KeyboardMonitor` and `MouseMonitor` report events to the adapter rather than mutating `TextBuffer` directly.
@@ -76,7 +82,10 @@ It owns:
 8. Done: add generated-text insertion so Text Generation and Memory Operation insertion no longer pass Explicit Selection state through Instruction Mode.
 9. Done: route Dictation Mode insertion through the same adapter.
 10. Done: put platform text IO calls behind `agent/text_io.py` so Input Environment tests can use the seam without patching `agent.typer`.
-11. Next: remove the compatibility `buf` constructor path from runtime helpers once downstream callers have migrated.
+11. Done: introduce Operation Window and Replacement Plan types without changing provider behavior.
+12. Done: route Text Revision and Text Removal through locally verified Replacement Plans.
+13. Done: add macOS caret-local Operation Window discovery and controlled AX replacement behind the TextIO adapter.
+14. Later: remove the compatibility `buf` constructor path from runtime helpers once downstream callers have migrated.
 
 ## Test Surface
 
@@ -88,10 +97,14 @@ Tests should cover the interface:
 - Text Generation and Memory Operation insertion move out of an Explicit Selection before inserting.
 - Operation Reversal uses the same insert/delete operations as forward operations.
 - Text Generation and Memory Operation insertion can be requested without passing Explicit Selection state through Instruction Mode.
+- An Operation Window can be larger than the Operation Target.
+- Replacement Plan application refuses changes whose target text is absent, duplicated ambiguously, or outside the current Operation Window.
+- A provider-suggested replacement records the exact old text and new text used for Operation Reversal.
 
 ## Non-Goals
 
-- Do not rewrite platform typing backends in this step.
-- Do not change provider behavior.
+- Do not move platform-specific typing behavior above the TextIO adapter.
+- Do not let provider behavior bypass local Replacement Plan verification.
 - Do not redesign Instruction Mode classification yet.
 - Do not introduce multiple adapters until there is a second real runtime that needs one.
+- Do not let a paid provider directly decide platform mutation. It proposes a Replacement Plan; the Input Environment verifies and applies it.

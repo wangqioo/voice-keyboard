@@ -6,6 +6,12 @@ from typing import Protocol
 from agent import typer
 
 
+@dataclass(frozen=True)
+class CaretTextWindow:
+    text: str
+    source: str = "caret"
+
+
 class TextIO(Protocol):
     def can_insert_text(self) -> bool:
         ...
@@ -19,16 +25,22 @@ class TextIO(Protocol):
     def get_selection(self) -> str:
         ...
 
+    def get_caret_text_window(self) -> CaretTextWindow | None:
+        ...
+
     def type_text(self, text: str) -> None:
         ...
 
     def jump_to_end(self) -> None:
         ...
 
-    def replace_selection(self, text: str) -> None:
+    def replace_selection(self, text: str, original: str = "") -> None:
         ...
 
-    def delete_selection(self) -> None:
+    def replace_text_window(self, original: str, replacement: str) -> bool:
+        ...
+
+    def delete_selection(self, original: str = "") -> None:
         ...
 
     def erase_last(self, text: str) -> None:
@@ -38,6 +50,9 @@ class TextIO(Protocol):
         ...
 
     def send_shortcut(self, name: str) -> bool:
+        ...
+
+    def current_application_label(self) -> str:
         ...
 
 
@@ -57,17 +72,26 @@ class TyperTextIO:
     def get_selection(self) -> str:
         return typer.get_selection()
 
+    def get_caret_text_window(self) -> CaretTextWindow | None:
+        window = typer.get_caret_text_window()
+        if window is None:
+            return None
+        return CaretTextWindow(text=window.text, source=window.source)
+
     def type_text(self, text: str) -> None:
         typer.type_text(text)
 
     def jump_to_end(self) -> None:
         typer.jump_to_end()
 
-    def replace_selection(self, text: str) -> None:
-        typer.replace_selection(text)
+    def replace_selection(self, text: str, original: str = "") -> None:
+        typer.replace_selection(text, original=original)
 
-    def delete_selection(self) -> None:
-        typer.delete_selection()
+    def replace_text_window(self, original: str, replacement: str) -> bool:
+        return typer.replace_text_window(original, replacement)
+
+    def delete_selection(self, original: str = "") -> None:
+        typer.delete_selection(original=original)
 
     def erase_last(self, text: str) -> None:
         typer.erase_last(text)
@@ -77,3 +101,6 @@ class TyperTextIO:
 
     def send_shortcut(self, name: str) -> bool:
         return typer.send_shortcut(name)
+
+    def current_application_label(self) -> str:
+        return typer.current_application().label

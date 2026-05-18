@@ -1,6 +1,6 @@
 # Voice Keyboard Engine
 
-Voice Keyboard Engine is a local voice input engine. It turns speech into text or text operations in the current input environment.
+Voice Keyboard Engine is a local voice-driven keyboard efficiency engine. It turns speech into text changes and keyboard-style operations in the current input environment, so common typing, editing, shortcut, and recall workflows can be driven by voice instead of repeated manual keyboard actions.
 
 For the domain language, read [CONTEXT.md](CONTEXT.md). For the repository boundary decision, read [docs/adr/0001-voice-keyboard-engine-boundary.md](docs/adr/0001-voice-keyboard-engine-boundary.md).
 
@@ -9,7 +9,7 @@ This repository owns the standalone local engine. TypeUp desktop packaging and T
 ## Capabilities
 
 - **Dictation Mode**: hold a hotkey, speak, and insert the spoken text into the focused input field.
-- **Instruction Mode**: hold a separate hotkey, speak an instruction, and let the engine revise, generate, remove, reverse, recall reusable text, or invoke shortcuts.
+- **Instruction Mode**: hold a separate hotkey, speak an instruction, and let the engine revise, generate, remove, reverse, recall reusable text, or invoke shortcuts. The product model is voice-driven keyboard operation, not chat-first or AI-native interaction. App-aware shortcut invocation is experimental.
 - **Software Capture Path**: use a computer microphone, USB microphone, Bluetooth microphone, or other audio input already available to the OS.
 - **Hardware Capture Path**: use a dedicated Voice Keyboard device as the capture source when hardware is connected.
 - Cross-platform text insertion through Unicode event injection or clipboard paste fallback.

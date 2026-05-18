@@ -173,9 +173,18 @@ instruction_mode:
 typing:
   method: unicode            # unicode 或 clip
   shortcuts:
-    # 语音说“打开设置”时执行 Cmd+,；Windows/Linux 可写成 ctrl+,
-    打开设置: cmd+,
+    # 全局快捷键：语音说“刷新”时向当前活动应用发送 Cmd+R。
     刷新: cmd+r
+
+  # 实验性：活动应用快捷键。
+  # Instruction Mode 会识别当前活动应用，并优先使用这里的映射。
+  # 这不是稳定产品承诺；用于验证“在活动应用里调用快捷键”的可行性。
+  # key 可以写 bundle id（推荐）或应用名。macOS bundle id 可从日志里的活动应用信息确认。
+  experimental_app_shortcuts:
+    com.openai.codex:
+      发送: cmd+enter
+    com.apple.TextEdit:
+      打开设置: cmd+,
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Claude Code AI 编程模式（可选）

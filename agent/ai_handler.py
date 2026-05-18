@@ -125,6 +125,7 @@ class AIHandler:
                 text=text,
                 selected=selected,
                 recent_text=context,
+                active_application=self._env.active_application(),
                 shortcuts=self._env.shortcuts(),
                 memo_keys=memo_keys(self._memos),
             ))
