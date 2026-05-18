@@ -17,19 +17,22 @@ import signal
 import sys
 import threading
 import time
+from pathlib import Path
 
-# 打包后显式指定 CA 证书路径，供 requests 等直接读取环境变量使用。
-if getattr(sys, "frozen", False):
+
+def _configure_ssl_cert_file() -> None:
+    """Point provider SDKs/WebSockets at certifi when the host OpenSSL lacks CA roots."""
     try:
         import certifi
-        from pathlib import Path
 
-        exe_dir = Path(sys.executable).resolve().parent
-        resources_dir = exe_dir.parent / "Resources"
-        bundled_candidates = [
-            resources_dir / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "certifi" / "cacert.pem",
-            resources_dir / "openssl.ca",
-        ]
+        bundled_candidates = []
+        if getattr(sys, "frozen", False):
+            exe_dir = Path(sys.executable).resolve().parent
+            resources_dir = exe_dir.parent / "Resources"
+            bundled_candidates.extend([
+                resources_dir / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "certifi" / "cacert.pem",
+                resources_dir / "openssl.ca",
+            ])
         _ca_path = None
         for p in bundled_candidates:
             if p.exists():
@@ -45,6 +48,9 @@ if getattr(sys, "frozen", False):
         print(f"[agent] 使用 CA 证书: {_ca_path}")
     except ImportError:
         pass
+
+
+_configure_ssl_cert_file()
 
 # 打包模式下日志重定向到文件，必须在所有 print 之前
 from agent import log_setup as _log_setup
