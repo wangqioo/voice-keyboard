@@ -61,6 +61,7 @@ def init(cfg: dict) -> None:
     _use_clipboard_mode = cfg.get("method", "unicode") == "clip"
     if _use_clipboard_mode:
         print("[typer] 剪贴板粘贴模式（适合微信等应用）")
+    _load_custom_shortcuts(cfg.get("shortcuts", {}))
 
 
 def is_erasing() -> bool:
@@ -317,6 +318,24 @@ def replace_selection(text: str) -> None:
     time.sleep(0.03)
 
 
+def delete_selection() -> None:
+    """删除当前选中内容，只发送一次 Backspace，并让热键监听忽略该合成事件。"""
+    global _simulating
+    _simulating = True
+    try:
+        if _OS == "Darwin":
+            src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
+            for key_down in (True, False):
+                evt = Quartz.CGEventCreateKeyboardEvent(src, 51, key_down)  # 51 = Backspace
+                Quartz.CGEventSetFlags(evt, 0)
+                Quartz.CGEventPost(Quartz.kCGHIDEventTap, evt)
+        else:
+            _press_key(Key.backspace)
+        time.sleep(0.05)
+    finally:
+        _simulating = False
+
+
 def replace_current_line(new_text: str) -> None:
     """
     Home → Shift+End 选中当前行，然后打入 new_text 替换。
@@ -474,6 +493,72 @@ def register_shortcut(name: str, keys: list) -> None:
 
 def list_shortcuts() -> list[str]:
     return list(_SHORTCUTS.keys())
+
+
+def _load_custom_shortcuts(shortcuts) -> None:
+    if not isinstance(shortcuts, dict):
+        return
+    for name, keys in shortcuts.items():
+        if not isinstance(name, str) or not name.strip():
+            continue
+        try:
+            parsed = _parse_shortcut_keys(keys)
+        except ValueError as e:
+            print(f"[typer] 忽略自定义快捷键 {name!r}: {e}")
+            continue
+        if parsed:
+            register_shortcut(name.strip(), parsed)
+
+
+def _parse_shortcut_keys(keys) -> list:
+    if isinstance(keys, str):
+        separator = "+" if "+" in keys else ","
+        parts = [p.strip() for p in keys.split(separator) if p.strip()]
+    elif isinstance(keys, list):
+        parts = [str(p).strip() for p in keys if str(p).strip()]
+    else:
+        raise ValueError("keys 必须是字符串或列表")
+    if not parts:
+        raise ValueError("keys 不能为空")
+    return [_parse_shortcut_key(part) for part in parts]
+
+
+def _parse_shortcut_key(part: str):
+    normalized = part.lower().replace("-", "_")
+    aliases = {
+        "cmd": "cmd",
+        "command": "cmd",
+        "win": "cmd",
+        "ctrl": "ctrl",
+        "control": "ctrl",
+        "alt": "alt",
+        "option": "alt",
+        "shift": "shift",
+        "enter": "enter",
+        "return": "enter",
+        "space": "space",
+        "tab": "tab",
+        "esc": "esc",
+        "escape": "esc",
+        "backspace": "backspace",
+        "delete": "delete",
+        "del": "delete",
+        "up": "up",
+        "down": "down",
+        "left": "left",
+        "right": "right",
+        "home": "home",
+        "end": "end",
+        "page_up": "page_up",
+        "page_down": "page_down",
+        "print_screen": "print_screen",
+    }
+    key_name = aliases.get(normalized, normalized)
+    if hasattr(Key, key_name):
+        return getattr(Key, key_name)
+    if len(part) == 1:
+        return KeyCode.from_char(part)
+    raise ValueError(f"未知按键 {part!r}")
 
 
 def jump_to_end() -> None:

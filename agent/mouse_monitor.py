@@ -1,24 +1,19 @@
 """
-全局鼠标监听，检测用户点击，标记 TextBuffer.cursor_uncertain。
+全局鼠标监听，检测用户点击，标记 Tracked Segment 为不安全。
 
-当用户点击鼠标时，光标可能已跳到其他位置，此时 buf.last 与输入框实际内容
-的对应关系不再可靠。打上 cursor_uncertain 标记后，语音编辑会切换到
-「行选择剪贴板模式」，通过 Home → Shift+End → 复制 读取真实当前行内容，
-而不是依赖自记账的 buf.last。
+当用户点击鼠标时，光标可能已跳到其他位置，此时 Tracked Segment 与
+Input Environment 实际内容的对应关系不再可靠。
 
 用途：触发后只需标记，不需要立刻做任何 IO。
 """
 
 from pynput import mouse
 
-from agent.text_buffer import TextBuffer
-
-
 class MouseMonitor:
-    """监听鼠标点击，标记 buf.cursor_uncertain = True。"""
+    """监听鼠标点击，标记 Tracked Segment 为不安全。"""
 
-    def __init__(self, buf: TextBuffer):
-        self._buf      = buf
+    def __init__(self, input_environment):
+        self._env      = input_environment
         self._listener = None
 
     def start(self):
@@ -37,5 +32,5 @@ class MouseMonitor:
     def _on_click(self, x, y, button, pressed):
         if pressed:
             # 任意鼠标按键按下时，认为光标位置已改变，同时标记新段落
-            self._buf.cursor_uncertain = True
-            self._buf.new_segment()
+            self._env.mark_tracked_segment_unsafe()
+            self._env.start_new_tracked_segment()
