@@ -1,6 +1,6 @@
 # Voice Keyboard Engine
 
-Voice Keyboard Engine is a local voice-driven keyboard efficiency engine. It turns speech into text changes and keyboard-style operations in the current input environment, so common typing, editing, shortcut, and recall workflows can be driven by voice instead of repeated manual keyboard actions.
+Voice Keyboard Engine is a local voice-driven keyboard efficiency engine. It turns speech into text changes and keyboard-style operations in the current input environment, so typing, editing, shortcut, window, application, and memo workflows can be driven by voice.
 
 For the domain language, read [CONTEXT.md](CONTEXT.md). For the repository boundary decision, read [docs/adr/0001-voice-keyboard-engine-boundary.md](docs/adr/0001-voice-keyboard-engine-boundary.md).
 
@@ -8,12 +8,19 @@ This repository owns the standalone local engine. TypeUp desktop packaging and T
 
 ## Capabilities
 
-- **Dictation Mode**: hold a hotkey, speak, and insert the spoken text into the focused input field.
-- **Instruction Mode**: hold a separate hotkey, speak an instruction, and let the engine revise, generate, remove, reverse, save or recall reusable text snippets, or invoke shortcuts. The product model is voice-driven keyboard operation, not chat-first or AI-native interaction. Shortcut Invocation is a core operation; app-aware shortcut catalogs are experimental.
-- **Software Capture Path**: use a computer microphone, USB microphone, Bluetooth microphone, or other audio input already available to the OS.
-- **Hardware Capture Path**: use a dedicated Voice Keyboard device as the capture source when hardware is connected.
-- Cross-platform text insertion through Unicode event injection or clipboard paste fallback.
-- Multiple Speech Interpretation Providers through configuration.
+- **Dictation Mode**: hold the dictation hotkey, speak, and insert the recognized text into the current input environment. Dictation is applied as direct typing; it does not use a general copy/paste fallback.
+- **Instruction Mode**: hold the instruction hotkey and speak a keyboard-style operation. The engine can revise text, generate text, remove text, invoke shortcuts, launch local applications, operate the current window, and save or recall memos.
+- **Text Revision**: explicit selection takes precedence. Without an explicit selection, revision defaults to the latest tracked segment inserted by the engine. Whole-scope wording such as "delete all" or "rewrite the whole input" targets the current safe input scope.
+- **Text Generation**: generated text is meant to enter the current input environment. The engine waits for the complete model output, then inserts it as one tracked segment so the next revision can edit it directly.
+- **Text Removal**: selected text can be removed directly. Broad removal requires explicit whole-scope wording; partial removal without a safe target fails closed and asks for selection.
+- **Memo Operation**: save, recall, delete, and list short user-provided memos. Memo is only a reusable text snippet feature, not chat memory, user profiling, or a personal knowledge base.
+- **Shortcut Invocation**: trigger curated low-conflict keyboard-style actions from local shortcut catalogs.
+- **Application Launch**: open locally discovered or configured applications by voice.
+- **System Window Action**: move, resize, maximize, minimize, or fullscreen the current desktop window through local system capabilities.
+- **Software Capture Path**: record through a computer microphone, USB microphone, Bluetooth microphone, or other OS-visible audio input.
+- **Hardware Capture Path**: record through a dedicated Voice Keyboard device when hardware is connected.
+
+The product model is voice-driven keyboard operation, not chat-first interaction. AI is an implementation detail used by some Instruction Mode operations.
 
 ## Install
 
@@ -35,7 +42,9 @@ python -m venv .venv
 copy config.yaml.example config.yaml
 ```
 
-Edit `config.yaml` and configure at least `stt`. Configure `llm` to enable Instruction Mode operations that need language model interpretation.
+Edit `config.yaml` and configure at least `stt`. Configure `llm` to enable Instruction Mode operations that need language model interpretation or generation.
+
+Packaged or live desktop runs may use `~/.voice-keyboard/config.yaml`; when that file exists, it takes precedence over the repository `config.yaml`.
 
 ## Run
 
@@ -45,10 +54,16 @@ List available microphones:
 .venv/bin/python -m agent.main --list-devices
 ```
 
-Run with the Software Capture Path:
+Run the local engine with the Software Capture Path:
 
 ```bash
 .venv/bin/python -m agent.main --no-serial
+```
+
+Run without the main UI, useful for terminal testing:
+
+```bash
+.venv/bin/python -u -m agent.main --no-serial --no-ui
 ```
 
 Run with a serial hardware receiver:
@@ -57,7 +72,13 @@ Run with a serial hardware receiver:
 .venv/bin/python -m agent.main
 ```
 
-On macOS, Python.org builds may need an explicit certificate path for provider HTTPS/WebSocket calls:
+On macOS, grant the runtime the required OS permissions:
+
+- Microphone, for audio capture.
+- Accessibility, for keyboard input and window operations.
+- Input Monitoring, when the selected typing backend or hotkey listener requires it.
+
+Python.org builds may also need an explicit certificate path for provider HTTPS/WebSocket calls:
 
 ```bash
 SSL_CERT_FILE=$(.venv/bin/python -c "import certifi; print(certifi.where())") \
@@ -79,15 +100,16 @@ The CLI path should stay separate from desktop-only imports and assumptions.
 
 ## Configuration
 
-Primary configuration lives in `config.yaml`. `.env` is also supported for deployment scenarios.
+Primary development configuration lives in `config.yaml`. User-level runtime configuration lives in `~/.voice-keyboard/config.yaml`. `.env` is also supported for deployment scenarios.
 
 Important sections:
 
 - `stt`: Speech Interpretation Provider adapter used for Dictation Mode speech recognition.
-- `llm`: Speech Interpretation Provider adapter used for Instruction Mode text interpretation and generation.
 - `ai_stt`: optional separate Speech Interpretation Provider adapter for Instruction Mode speech recognition.
+- `polish_stt`: optional recognition configuration for polish-style speech flows.
+- `llm`: Speech Interpretation Provider adapter used for Instruction Mode interpretation, revision, and generation.
 - `audio`: capture mode, hotkeys, microphone selection, and VAD settings.
-- `typing`: text insertion backend, usually `unicode` or `clip`.
+- `typing`: text insertion backend configuration.
 
 Common audio settings:
 
@@ -98,8 +120,6 @@ audio:
   ai_key: alt_r
   device: auto
 ```
-
-Use `typing.method: clip` for applications that reject Unicode keyboard event injection, such as some Electron apps.
 
 ## Runtime Entry Points
 
@@ -118,19 +138,13 @@ Useful desktop runtime flags:
 
 ## Tests
 
-Run the test suite:
-
-```bash
-pytest
-```
-
-Run local non-interactive tests without the focused-input typing smoke test:
+Run the local non-interactive test suite:
 
 ```bash
 scripts/test-local.sh
 ```
 
-Run a typing smoke test after granting required OS permissions:
+Run a focused typing smoke test only after granting required OS permissions and preparing a real target input field:
 
 ```bash
 .venv/bin/python test/test_typing.py
