@@ -22,6 +22,27 @@ This repository owns the standalone local engine. TypeUp desktop packaging and T
 
 The product model is voice-driven keyboard operation, not chat-first interaction. AI is an implementation detail used by some Instruction Mode operations.
 
+## Platform Status
+
+**Current verification baseline: macOS.** The feature work in this version was developed and tested on macOS. The local automated test suite was run on macOS, and the real input-field behavior was debugged against macOS desktop permissions, keyboard injection, and Accessibility APIs.
+
+**Windows is not fully validated yet.** The repository contains basic Windows adapters for direct typing, tray startup, global shortcuts, and simple foreground-window actions, but this version has not been tested end to end on Windows. Porting this behavior to Windows must include a full Windows test pass from startup through real text insertion, selection replacement, no-selection revision, whole-scope deletion, memo recall, shortcut invocation, and window actions.
+
+The macOS build currently supports:
+
+- Dictation into the current input environment by direct typing.
+- Immediate recording status feedback when the dictation hotkey is pressed.
+- Instruction Mode text generation, with complete model output inserted as one tracked segment.
+- No-selection Text Revision of the latest tracked segment inserted by the engine.
+- Explicit-selection Text Revision and Text Removal through macOS Accessibility when available.
+- Whole-scope rewrite and whole-scope deletion when the spoken instruction explicitly asks for the whole input.
+- Memo save, recall, delete, and list operations.
+- Shortcut Invocation from curated global and application-aware shortcut catalogs.
+- Application Launch for locally discovered or configured applications.
+- macOS System Window Actions including left half, right half, maximize, center, and fullscreen handling.
+- Software Capture Path through OS-visible microphones.
+- Hardware Capture Path through a serial Voice Keyboard device when connected.
+
 ## Install
 
 Requires Python 3.11+.
