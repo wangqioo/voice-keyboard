@@ -208,7 +208,7 @@ class InputEnvironmentTests(unittest.TestCase):
         self.assertIn(("type_text", "dictated"), text_io.calls)
         self.assertEqual(buf.current_segment, "dictated")
 
-    def test_insert_dictation_copies_to_clipboard_when_no_input_is_focused(self):
+    def test_insert_dictation_pastes_when_focus_probe_falls_back(self):
         buf = TextBuffer()
         text_io = FakeTextIO()
         text_io.can_insert = False
@@ -222,12 +222,12 @@ class InputEnvironmentTests(unittest.TestCase):
             [
                 ("can_insert_text",),
                 ("confirm_paste_text", "dictated"),
+                ("paste_text", "dictated"),
             ],
         )
-        self.assertFalse(result.ok)
-        self.assertEqual(result.failure, "copied_to_clipboard")
-        self.assertEqual(result.copied_text, "dictated")
-        self.assertEqual(buf.current_segment, "")
+        self.assertTrue(result.ok)
+        self.assertEqual(result.inserted_text, "dictated")
+        self.assertEqual(buf.current_segment, "dictated")
 
     def test_insert_generated_text_reports_cancelled_paste(self):
         text_io = FakeTextIO()

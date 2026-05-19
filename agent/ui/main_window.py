@@ -293,6 +293,8 @@ class _ShortcutsTab(NSObject):
         self._app = app
         self._rows = []
         self._blocked_names: list[str] = []
+        self._catalog_table = None
+        self._blocked_table = None
         self.view = self._build()
         self.reload_(None)
         return self
@@ -368,8 +370,10 @@ class _ShortcutsTab(NSObject):
             for name in blocked
             if isinstance(name, str) and name.strip()
         })
-        self._catalog_table.reloadData()
-        self._blocked_table.reloadData()
+        if self._catalog_table is not None:
+            self._catalog_table.reloadData()
+        if self._blocked_table is not None:
+            self._blocked_table.reloadData()
 
     def numberOfRowsInTableView_(self, table):
         if table == self._blocked_table:

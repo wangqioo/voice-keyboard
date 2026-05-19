@@ -190,7 +190,10 @@ def has_focused_text_input() -> bool:
         elem = ApplicationServices.AXUIElementCreateApplication(pid)
         err, focused = ApplicationServices.AXUIElementCopyAttributeValue(elem, "AXFocusedUIElement", None)
         if err != 0 or focused is None:
-            if not _use_clipboard_mode and _allows_typing_without_focused_element(bundle_id, app_name):
+            if (
+                _allows_typing_without_focused_element(bundle_id, app_name)
+                or _allows_clipboard_paste_when_focus_uncertain(bundle_id, app_name)
+            ):
                 key = (bundle_id or app_name, pid)
                 if key != _last_focus_fallback_log:
                     print(
@@ -216,6 +219,8 @@ def has_focused_text_input() -> bool:
             and (settable_value or settable_range)
             and not _looks_like_browser_document(bundle_id, role_name, subrole, description)
         )
+        if not ok and _allows_clipboard_paste_when_focus_uncertain(bundle_id, app_name):
+            ok = True
         print(
             "[typer] focus check: "
             f"app={app_name!r} bundle={bundle_id!r} role={role_name!r} "
@@ -331,6 +336,26 @@ def _allows_typing_without_focused_element(bundle_id: str, app_name: str) -> boo
     if any(marker in bundle or marker in name for marker in allow_markers):
         return True
     return False
+
+
+def _allows_clipboard_paste_when_focus_uncertain(bundle_id: str, app_name: str) -> bool:
+    if not _use_clipboard_mode:
+        return False
+    bundle = bundle_id.lower()
+    name = app_name.lower()
+    blocked_markers = (
+        "com.apple.finder",
+        "com.apple.dock",
+        "com.apple.systemuiserver",
+        "com.apple.systempreferences",
+        "com.apple.systemsettings",
+        "voice keyboard",
+        "com.wangqi.voicekeyboard",
+    )
+    return bool(bundle or name) and not any(
+        marker in bundle or marker in name
+        for marker in blocked_markers
+    )
 
 
 def confirm_paste_without_focused_input(text: str) -> bool:
