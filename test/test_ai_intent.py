@@ -27,21 +27,6 @@ class AIIntentTests(unittest.TestCase):
 
         self.assertEqual(result, {"type": "edit"})
 
-    def test_selected_edit_instruction_can_override_chat_when_enabled(self):
-        llm = MagicMock()
-        llm.chat.return_value = '{"type":"chat","reply":"请提供内容"}'
-
-        result = classify_intent(
-            llm,
-            IntentContext(
-                text="帮我润色一下",
-                selected="这是一段原文",
-            ),
-            IntentFallbackOptions(edit_hint_override=True),
-        )
-
-        self.assertEqual(result, {"type": "edit"})
-
     def test_selected_edit_override_can_be_disabled(self):
         llm = MagicMock()
         llm.chat.return_value = '{"type":"write"}'
@@ -67,21 +52,6 @@ class AIIntentTests(unittest.TestCase):
         ))
 
         self.assertEqual(result, {"type": "chat", "reply": "请提供内容"})
-
-    def test_edit_hint_without_selection_but_recent_text_can_override_when_enabled(self):
-        llm = MagicMock()
-        llm.chat.return_value = '{"type":"chat","reply":"请提供内容"}'
-
-        result = classify_intent(
-            llm,
-            IntentContext(
-                text="把上一句翻译成英文",
-                recent_text="上一句",
-            ),
-            IntentFallbackOptions(edit_hint_override=True),
-        )
-
-        self.assertEqual(result, {"type": "edit"})
 
     def test_write_request_with_edit_hint_without_target_stays_write(self):
         llm = MagicMock()
@@ -140,6 +110,17 @@ class AIIntentTests(unittest.TestCase):
 
         self.assertEqual(result, {"type": "shortcut", "name": "保存"})
 
+    def test_undo_intent_is_normalized_to_application_shortcut(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"undo"}'
+
+        result = classify_intent(llm, IntentContext(
+            text="撤销",
+            shortcuts=("撤销",),
+        ))
+
+        self.assertEqual(result, {"type": "shortcut", "name": "撤销"})
+
     def test_classifier_prompt_includes_active_application_shortcuts(self):
         llm = MagicMock()
         llm.chat.return_value = '{"type":"shortcut","name":"发送"}'
@@ -153,6 +134,18 @@ class AIIntentTests(unittest.TestCase):
         _system, user = llm.chat.call_args.args
         self.assertIn("当前活动应用：Codex (com.openai.codex)", user)
         self.assertIn("当前活动应用可用 Shortcut Catalog：发送", user)
+
+    def test_classifier_can_resolve_office_action_from_shortcut_catalog(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"shortcut","name":"插入批注"}'
+
+        result = classify_intent(llm, IntentContext(
+            text="插入批注",
+            active_application="Microsoft Word (com.microsoft.Word)",
+            shortcuts=("插入批注", "加粗", "标题 1"),
+        ))
+
+        self.assertEqual(result, {"type": "shortcut", "name": "插入批注"})
 
     def test_current_runtime_asks_to_split_multi_step_instruction(self):
         llm = MagicMock()

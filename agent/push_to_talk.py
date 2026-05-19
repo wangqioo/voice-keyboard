@@ -57,13 +57,11 @@ class PushToTalk:
         toggle_key:        Optional[str] = None,
         device:            Optional[str] = "auto",
         status_window=None,
-        kbd_monitor=None,
     ):
         self._on_utterance      = on_utterance
         self._on_edit_utterance = on_edit_utterance
         self._on_ai_utterance   = on_ai_utterance
         self._on_ai_key_down    = on_ai_key_down
-        self._kbd_monitor       = kbd_monitor
         self._ptt_keys          = _parse_keys(ptt_key)
         self._edit_keys         = _parse_keys(edit_key) if on_edit_utterance else []
         self._ai_keys           = _parse_keys(ai_key)   if on_ai_utterance   else []
@@ -133,12 +131,6 @@ class PushToTalk:
         if self._toggle_keys and key in self._toggle_keys:
             self._toggle_enabled()
             return
-        # 顺手把退格/Delete/Enter 同步给 KeyboardMonitor，避免再开一个 CGEventTap
-        if self._kbd_monitor is not None:
-            try:
-                self._kbd_monitor.process_press(key)
-            except Exception:
-                pass
         if key in self._ptt_keys:
             now = time.monotonic()
             start = self._capture_runtime.press_dictation(key, now)

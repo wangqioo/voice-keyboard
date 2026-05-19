@@ -21,14 +21,12 @@ class RuntimeBackend:
 
     def __init__(self):
         self.cfg = None
-        self.kbd_monitor = None
-        self.mouse_monitor = None
         self.reader = None
         self.audio = None
         self.input_environment = None
 
     def stop(self):
-        for attr in ("audio", "reader", "mouse_monitor", "kbd_monitor"):
+        for attr in ("audio", "reader"):
             comp = getattr(self, attr, None)
             if comp is None:
                 continue
@@ -56,26 +54,7 @@ def build_runtime_backend(
     bk.cfg = load_config()
     from agent.typer import init as typer_init
     typer_init(bk.cfg.get("typing", {}))
-    instruction_cfg = bk.cfg.get("instruction_mode", {})
-    bk.input_environment = TyperInputEnvironment(
-        buf,
-        require_selection_for_instruction=instruction_cfg.get(
-            "require_selection_for_edit", False
-        ),
-    )
-
-    if not instruction_cfg.get("require_selection_for_edit", False):
-        try:
-            from agent.keyboard_monitor import KeyboardMonitor
-            from agent.mouse_monitor import MouseMonitor
-            bk.kbd_monitor = KeyboardMonitor(bk.input_environment)
-            bk.kbd_monitor.start()
-            bk.mouse_monitor = MouseMonitor(bk.input_environment)
-            bk.mouse_monitor.start()
-        except Exception as e:
-            print(f"[agent] 追踪监听启动失败（{e}），Tracked Segment 安全检测不可用")
-    else:
-        print("[agent] 编辑/删除仅使用 Explicit Selection，已关闭鼠标/回车/退格追踪检测")
+    bk.input_environment = TyperInputEnvironment(buf)
 
     if not options.no_serial:
         from agent.main import make_serial_handlers
@@ -92,7 +71,6 @@ def build_runtime_backend(
     bk.audio = build_audio_runtime(
         bk.cfg,
         buf,
-        kbd_monitor=bk.kbd_monitor,
         status_window=status_window,
         history=history,
         input_environment=bk.input_environment,
@@ -103,7 +81,6 @@ def build_runtime_backend(
 def build_audio_runtime(
     cfg: dict,
     buf: TextBuffer,
-    kbd_monitor=None,
     status_window=None,
     history: History | None = None,
     input_environment=None,
@@ -147,7 +124,6 @@ def build_audio_runtime(
     on_utterance = make_utterance_handler(
         providers.utterance_stt,
         buf,
-        kbd_mon=kbd_monitor,
         editor=providers.text_operation_editor,
         status_window=status_window,
         history=history,
@@ -171,7 +147,6 @@ def build_audio_runtime(
             toggle_key=audio_cfg.get("toggle_key"),
             device=device,
             status_window=status_window,
-            kbd_monitor=kbd_monitor,
         )
         ptt.start()
         return ptt

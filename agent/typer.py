@@ -4,6 +4,8 @@ import time
 from dataclasses import dataclass
 from pynput.keyboard import Controller, Key, KeyCode
 
+from agent.app_shortcut_presets import MACOS_APP_SHORTCUT_PRESETS
+
 _kb = Controller()
 _OS = platform.system()
 
@@ -58,6 +60,8 @@ _erasing: bool = False
 _simulating: bool = False   # 程序自己发 Cmd+C/V 等按键时置 True，让 PTT 监听忽略
 _use_clipboard_mode: bool = False
 _last_focus_fallback_log: tuple[str, int | None] | None = None
+_BLOCKED_SHORTCUT_NAMES: set[str] = set()
+_BLOCKED_SHORTCUT_KEY_SEQUENCES: set[tuple[str, ...]] = set()
 
 
 @dataclass(frozen=True)
@@ -107,6 +111,7 @@ def init(cfg: dict) -> None:
     _use_clipboard_mode = cfg.get("method", "unicode") == "clip"
     if _use_clipboard_mode:
         print("[typer] 剪贴板粘贴模式（适合微信等应用）")
+    _load_blocked_shortcuts(cfg)
     _load_custom_shortcuts(cfg.get("shortcuts", {}))
     _APP_SHORTCUTS.clear()
     app_shortcuts = cfg.get("experimental_app_shortcuts", cfg.get("app_shortcuts", {}))
@@ -141,98 +146,7 @@ _SYSTEM_ACTIONS = {
     "系统设置": "open_system_settings",
     "打开设置": "open_system_settings",
 }
-_MACOS_APP_SHORTCUT_PRESETS: dict[str, dict[str, str]] = {
-    # Chat and collaboration apps
-    "com.openai.codex": {
-        "发送": "cmd+enter",
-        "新建会话": "cmd+n",
-    },
-    "com.bytedance.macos.feishu": {
-        "发送": "enter",
-        "换行": "shift+enter",
-        "搜索": "cmd+k",
-    },
-    "com.bytedance.lark": {
-        "发送": "enter",
-        "换行": "shift+enter",
-        "搜索": "cmd+k",
-    },
-    "com.tencent.xinwechat": {
-        "发送": "enter",
-        "换行": "shift+enter",
-        "搜索": "cmd+f",
-    },
-    "com.tencent.weworkmac": {
-        "发送": "enter",
-        "换行": "shift+enter",
-        "搜索": "cmd+f",
-    },
-    "com.tinyspeck.slackmacgap": {
-        "发送": "cmd+enter",
-        "换行": "shift+enter",
-        "搜索": "cmd+g",
-    },
-    "ru.keepcoder.telegram": {
-        "发送": "enter",
-        "换行": "shift+enter",
-        "搜索": "cmd+f",
-    },
-
-    # Browsers
-    "com.google.chrome": {
-        "地址栏": "cmd+l",
-        "重新打开标签": "cmd+shift+t",
-        "开发者工具": "cmd+option+i",
-        "查找": "cmd+f",
-    },
-    "com.microsoft.edgemac": {
-        "地址栏": "cmd+l",
-        "重新打开标签": "cmd+shift+t",
-        "开发者工具": "cmd+option+i",
-        "查找": "cmd+f",
-    },
-    "com.apple.safari": {
-        "地址栏": "cmd+l",
-        "重新打开标签": "cmd+shift+t",
-        "查找": "cmd+f",
-        "阅读器": "cmd+shift+r",
-    },
-    "org.mozilla.firefox": {
-        "地址栏": "cmd+l",
-        "重新打开标签": "cmd+shift+t",
-        "开发者工具": "cmd+option+i",
-        "查找": "cmd+f",
-    },
-
-    # Editors and note tools
-    "com.microsoft.vscode": {
-        "命令面板": "cmd+shift+p",
-        "快速打开": "cmd+p",
-        "全局搜索": "cmd+shift+f",
-        "格式化": "option+shift+f",
-        "切换终端": "ctrl+`",
-    },
-    "com.todesktop.230313mzl4w4u92": {
-        "命令面板": "cmd+shift+p",
-        "快速打开": "cmd+p",
-        "全局搜索": "cmd+shift+f",
-        "格式化": "option+shift+f",
-        "切换终端": "ctrl+`",
-    },
-    "md.obsidian": {
-        "命令面板": "cmd+p",
-        "快速切换": "cmd+o",
-        "全局搜索": "cmd+shift+f",
-    },
-    "notion.id": {
-        "搜索": "cmd+p",
-        "新页面": "cmd+n",
-        "换行": "shift+enter",
-    },
-    "com.apple.textedit": {
-        "打开设置": "cmd+,",
-    },
-}
+_MACOS_APP_SHORTCUT_PRESETS = MACOS_APP_SHORTCUT_PRESETS
 _APP_SHORTCUTS: dict[str, dict[str, list]] = {}
 _HIGH_RISK_SHORTCUT_NAMES = {
     "发送",
@@ -681,6 +595,8 @@ def _slice_caret_text_window(
 ) -> CaretTextWindow | None:
     if not text:
         return None
+    if len(text) <= max_chars:
+        return CaretTextWindow(text.strip(), "text_field")
     sentence = _slice_around_caret(text, caret, _SENTENCE_BOUNDARIES)
     if sentence:
         return CaretTextWindow(_limit_window(sentence, max_chars), "caret_sentence")
@@ -1096,8 +1012,10 @@ def shortcut_catalog() -> list[ShortcutCatalogEntry]:
     names: list[str] = []
     entries: list[ShortcutCatalogEntry] = []
 
-    def add(name: str, source: str, application: str = "") -> None:
+    def add(name: str, source: str, application: str = "", keys: list | None = None) -> None:
         if name in names:
+            return
+        if _shortcut_is_blocked(name, keys):
             return
         names.append(name)
         entries.append(ShortcutCatalogEntry(
@@ -1108,10 +1026,10 @@ def shortcut_catalog() -> list[ShortcutCatalogEntry]:
         ))
 
     app = current_application()
-    for name in _app_shortcuts_for(app):
-        add(name, "application", app.label)
-    for name in _SHORTCUTS:
-        add(name, "global")
+    for name, keys in _app_shortcuts_for(app).items():
+        add(name, "application", app.label, keys)
+    for name, keys in _SHORTCUTS.items():
+        add(name, "global", keys)
     for name in _SYSTEM_ACTIONS:
         add(name, "system")
     return entries
@@ -1150,10 +1068,14 @@ def _shortcut_risk(name: str) -> str:
     return "high" if name in _HIGH_RISK_SHORTCUT_NAMES else "normal"
 
 
+def _shortcut_is_blocked(name: str, keys: list | None = None) -> bool:
+    return name in _BLOCKED_SHORTCUT_NAMES or _shortcut_key_signature(keys) in _BLOCKED_SHORTCUT_KEY_SEQUENCES
+
+
 def _app_shortcut(app: ActiveApplication, name: str) -> list | None:
     for shortcuts in _app_shortcut_maps(app):
         keys = shortcuts.get(name)
-        if keys:
+        if keys and not _shortcut_is_blocked(name, keys):
             return keys
     return None
 
@@ -1239,6 +1161,35 @@ def _load_app_shortcuts(app_shortcuts) -> None:
             _APP_SHORTCUTS[key] = parsed_shortcuts
             _APP_SHORTCUTS[key.lower()] = parsed_shortcuts
             print(f"[typer] 已加载实验性活动应用快捷键: {key}")
+
+
+def _load_blocked_shortcuts(cfg: dict) -> None:
+    _BLOCKED_SHORTCUT_NAMES.clear()
+    _BLOCKED_SHORTCUT_KEY_SEQUENCES.clear()
+    for name in cfg.get("blocked_shortcuts", []) or []:
+        if isinstance(name, str) and name.strip():
+            _BLOCKED_SHORTCUT_NAMES.add(name.strip())
+    for keys in cfg.get("blocked_shortcut_keys", []) or []:
+        try:
+            parsed = _parse_shortcut_keys(keys)
+        except ValueError as e:
+            print(f"[typer] 忽略保留快捷键 {keys!r}: {e}")
+            continue
+        _BLOCKED_SHORTCUT_KEY_SEQUENCES.add(_shortcut_key_signature(parsed))
+
+
+def _shortcut_key_signature(keys: list | None) -> tuple[str, ...]:
+    if not keys:
+        return ()
+    return tuple(_shortcut_key_token(key) for key in keys)
+
+
+def _shortcut_key_token(key) -> str:
+    if isinstance(key, KeyCode):
+        return f"char:{key.char}"
+    if isinstance(key, Key):
+        return f"key:{key.name}"
+    return str(key)
 
 
 def _parse_shortcut_keys(keys) -> list:

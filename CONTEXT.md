@@ -85,12 +85,8 @@ A **Voice Text Operation** that creates insertable text from the user's spoken r
 _Avoid_: Writing, AI writing
 
 **Text Removal**:
-A **Voice Text Operation** that deletes an **Explicit Selection** or a safe **Tracked Segment**.
+A **Voice Text Operation** that deletes an **Explicit Selection** or, for a generic delete request, the current safe text range exposed by the **Input Environment**.
 _Avoid_: Delete command
-
-**Operation Reversal**:
-A **Voice Text Operation** that restores the previous state affected by the last reversible **Voice Keyboard Operation**.
-_Avoid_: Undo, Ctrl+Z
 
 **Shortcut Invocation**:
 A **Voice Keyboard Operation** that triggers a named system or application shortcut.
@@ -133,11 +129,12 @@ _Avoid_: STT provider, LLM provider, model, backend
 - A **Capture Path** supplies speech to either **Dictation Mode** or **Instruction Mode**.
 - A **Software Capture Path** and a **Hardware Capture Path** are both **Capture Paths**.
 - An **Explicit Selection** takes precedence for operations that modify existing text.
-- When there is no **Explicit Selection**, the default **Operation Window** is the current safe text range exposed by the **Input Environment**.
-- A **Tracked Segment** can be modified only while the engine still considers it safe.
+- When there is no **Explicit Selection**, replacement-style operations may use the current safe text range exposed by the **Input Environment** only when the user asks for the whole scope.
+- Local partial replacement or removal without an **Explicit Selection** should fail closed and ask the user to select the text.
 - An **Operation Window** is context for a replacement-style operation; it is not automatically the **Operation Target**.
 - A **Replacement Plan** must be checked against the current **Operation Window** before the engine applies it.
-- **Instruction Mode** may produce a **Text Revision**, **Text Generation**, **Text Removal**, **Operation Reversal**, **Shortcut Invocation**, or **Reusable Text Operation**.
+- **Instruction Mode** may produce a **Text Revision**, **Text Generation**, **Text Removal**, **Shortcut Invocation**, or **Reusable Text Operation**.
+- Spoken undo is a **Shortcut Invocation** of the current **Input Environment** undo action, not a separate local text history feature.
 - A **Shortcut Invocation** is a **Voice Keyboard Operation** but not a **Voice Text Operation** unless it changes text in the **Input Environment**.
 - **Shortcut Invocation** is a core operation type; app-aware shortcut catalogs are an implementation capability.
 - A **Shortcut Invocation** is atomic when it names one user-visible shortcut action, even if the implementation sends multiple low-level key events.
@@ -167,7 +164,7 @@ _Avoid_: STT provider, LLM provider, model, backend
 - "AI-native" can overstate the product identity; resolved: the product is a general-purpose voice-driven keyboard efficiency layer, and AI is only one implementation technique for interpreting speech into user operations.
 - "operation sequence" would make permissions, confirmation, and rollback too broad for the current product; resolved: allow only an **Atomic Operation Stack** of user-explicit operations, not autonomous planning.
 - "hardware mode" and "software mode" were used as product modes; resolved: they are **Capture Path** variants, not separate operation modes.
-- `TextBuffer`, `current_segment`, and `cursor_uncertain` are implementation terms; resolved: the domain terms are **Tracked Segment** and safe/unsafe operation on it.
+- `TextBuffer` and `current_segment` are implementation terms; resolved: the domain term is **Tracked Segment**.
 - "operation object" can mean either the safe context range or the text actually changed; resolved: use **Operation Window** for the safe context and **Operation Target** for the replace/remove span.
 - "chat" exists as an auxiliary feedback behavior, but is not a core **Voice Keyboard Operation** unless it changes or drives the **Input Environment**.
 - "memory operation" used to describe reusable snippets; resolved: the domain term is **Reusable Text Operation**, while implementation may still use `memo` names.

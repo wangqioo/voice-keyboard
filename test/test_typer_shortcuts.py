@@ -138,6 +138,126 @@ class TyperShortcutTests(unittest.TestCase):
         self.assertEqual(address_bar.source, "application")
         self.assertEqual(address_bar.application, "Chrome (com.google.Chrome)")
 
+    def test_macos_builtin_app_presets_include_office_wps_and_feishu_targets(self):
+        cases = [
+            (
+                typer.ActiveApplication("Microsoft Word", "com.microsoft.Word", 42),
+                {"加粗", "插入批注", "标题 1", "项目符号列表"},
+            ),
+            (
+                typer.ActiveApplication("Microsoft Excel", "com.microsoft.Excel", 42),
+                {"编辑单元格", "自动求和", "筛选", "填充向下"},
+            ),
+            (
+                typer.ActiveApplication(
+                    "Microsoft PowerPoint",
+                    "com.microsoft.Powerpoint",
+                    42,
+                ),
+                {"新建幻灯片", "开始放映", "复制幻灯片", "演讲者视图"},
+            ),
+            (
+                typer.ActiveApplication("WPS Office", "com.kingsoft.wpsoffice.mac", 42),
+                {"加粗", "插入批注", "新建幻灯片", "筛选"},
+            ),
+            (
+                typer.ActiveApplication("飞书", "com.bytedance.macos.feishu", 42),
+                {"发送", "换行", "搜索", "新建文档", "多维表格加粗"},
+            ),
+        ]
+        for app, expected_names in cases:
+            with self.subTest(app=app.label):
+                with (
+                    patch.object(typer, "_OS", "Darwin"),
+                    patch.dict(typer._APP_SHORTCUTS, {}, clear=True),
+                    patch.object(typer, "current_application", return_value=app),
+                ):
+                    catalog = typer.shortcut_catalog()
+
+                names = {entry.name for entry in catalog if entry.source == "application"}
+                self.assertTrue(
+                    expected_names.issubset(names),
+                    f"{app.label} missing {expected_names - names}",
+                )
+
+    def test_send_shortcut_uses_office_application_preset(self):
+        app = typer.ActiveApplication("Microsoft Word", "com.microsoft.Word", 42)
+        with (
+            patch.object(typer, "_OS", "Darwin"),
+            patch.dict(typer._APP_SHORTCUTS, {}, clear=True),
+            patch.object(typer, "current_application", return_value=app),
+            patch.object(typer, "_press_keys") as press_keys,
+        ):
+            self.assertTrue(typer.send_shortcut("插入批注"))
+
+        press_keys.assert_called_once_with([Key.cmd, Key.alt, typer.KeyCode.from_char("a")])
+
+    def test_macos_feishu_preset_includes_bitable_editing_shortcuts(self):
+        app = typer.ActiveApplication("飞书", "com.bytedance.macos.feishu", 42)
+        expected_names = {
+            "多维表格撤销",
+            "多维表格重做",
+            "多维表格加粗",
+            "多维表格斜体",
+            "多维表格下划线",
+            "多维表格删除线",
+            "多维表格清除格式",
+            "多维表格打开插入菜单",
+            "多维表格打开快捷键帮助",
+        }
+        with (
+            patch.object(typer, "_OS", "Darwin"),
+            patch.dict(typer._APP_SHORTCUTS, {}, clear=True),
+            patch.object(typer, "current_application", return_value=app),
+        ):
+            catalog = typer.shortcut_catalog()
+
+        names = {entry.name for entry in catalog if entry.source == "application"}
+        self.assertTrue(expected_names.issubset(names))
+        self.assertNotIn("多维表格居中", names)
+
+    def test_send_shortcut_uses_feishu_bitable_preset(self):
+        app = typer.ActiveApplication("飞书", "com.bytedance.macos.feishu", 42)
+        with (
+            patch.object(typer, "_OS", "Darwin"),
+            patch.dict(typer._APP_SHORTCUTS, {}, clear=True),
+            patch.object(typer, "current_application", return_value=app),
+            patch.object(typer, "_press_keys") as press_keys,
+        ):
+            self.assertTrue(typer.send_shortcut("多维表格清除格式"))
+
+        press_keys.assert_called_once_with([Key.cmd, typer.KeyCode.from_char("\\")])
+
+    def test_blocked_shortcut_name_is_removed_from_catalog_and_execution(self):
+        app = typer.ActiveApplication("飞书", "com.bytedance.macos.feishu", 42)
+        with (
+            patch.object(typer, "_OS", "Darwin"),
+            patch.object(typer, "current_application", return_value=app),
+            patch.object(typer, "_BLOCKED_SHORTCUT_NAMES", set()),
+            patch.object(typer, "_BLOCKED_SHORTCUT_KEY_SEQUENCES", set()),
+            patch.object(typer, "_press_keys") as press_keys,
+        ):
+            typer.init({"blocked_shortcuts": ["多维表格清除格式"]})
+            self.assertNotIn("多维表格清除格式", typer.list_shortcuts())
+            self.assertFalse(typer.send_shortcut("多维表格清除格式"))
+
+        press_keys.assert_not_called()
+
+    def test_blocked_shortcut_keys_are_removed_from_catalog_and_execution(self):
+        app = typer.ActiveApplication("飞书", "com.bytedance.macos.feishu", 42)
+        with (
+            patch.object(typer, "_OS", "Darwin"),
+            patch.object(typer, "current_application", return_value=app),
+            patch.object(typer, "_BLOCKED_SHORTCUT_NAMES", set()),
+            patch.object(typer, "_BLOCKED_SHORTCUT_KEY_SEQUENCES", set()),
+            patch.object(typer, "_press_keys") as press_keys,
+        ):
+            typer.init({"blocked_shortcut_keys": ["cmd+shift+z"]})
+            self.assertNotIn("多维表格重做", typer.list_shortcuts())
+            self.assertFalse(typer.send_shortcut("多维表格重做"))
+
+        press_keys.assert_not_called()
+
     def test_macos_builtin_app_preset_is_not_used_on_other_platforms(self):
         app = typer.ActiveApplication("Chrome", "com.google.Chrome", 42)
         with (
@@ -403,14 +523,14 @@ class TyperShortcutTests(unittest.TestCase):
 
         copy_selection.assert_not_called()
 
-    def test_slice_caret_text_window_prefers_current_sentence(self):
+    def test_slice_caret_text_window_prefers_current_text_when_small(self):
         text = "第一句。第二句需要修改。第三句。"
 
         window = typer._slice_caret_text_window(text, text.index("需要"))
 
         self.assertIsNotNone(window)
-        self.assertEqual(window.text, "第二句需要修改。")
-        self.assertEqual(window.source, "caret_sentence")
+        self.assertEqual(window.text, text)
+        self.assertEqual(window.source, "text_field")
 
     def test_slice_caret_text_window_limits_long_sentence(self):
         text = "a" * 20
@@ -435,8 +555,8 @@ class TyperShortcutTests(unittest.TestCase):
             window = typer.get_caret_text_window()
 
         self.assertIsNotNone(window)
-        self.assertEqual(window.text, "第二句需要修改。")
-        self.assertEqual(window.source, "caret_sentence")
+        self.assertEqual(window.text, text)
+        self.assertEqual(window.source, "text_field")
 
     def test_accessibility_replacement_uses_value_range(self):
         focused = object()

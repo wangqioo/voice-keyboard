@@ -7,9 +7,7 @@ from agent.input_environment import (
     TextInsertionResult,
     TextTarget,
     TyperInputEnvironment,
-    UnsafeTrackedSegment,
 )
-from agent.operation_history import OperationEffect
 from agent.text_buffer import TextBuffer
 from agent.text_io import CaretTextWindow
 from agent.text_io import ShortcutCatalogEntry
@@ -132,6 +130,19 @@ class InputEnvironmentTests(unittest.TestCase):
         self.assertTrue(env.send_shortcut("保存"))
         self.assertEqual(env.active_application(), "Codex (com.openai.codex)")
 
+    def test_delete_all_text_by_shortcut_selects_all_and_deletes(self):
+        buf = TextBuffer()
+        buf.push("old")
+        text_io = FakeTextIO()
+        text_io.shortcuts_value = ["全选", "删除"]
+        env = TyperInputEnvironment(buf, text_io=text_io)
+
+        self.assertTrue(env.delete_all_text_by_shortcut())
+
+        self.assertIn(("send_shortcut", "全选"), text_io.calls)
+        self.assertIn(("send_shortcut", "删除"), text_io.calls)
+        self.assertEqual(buf.current_segment, "")
+
     def test_shortcut_policy_blocks_shortcuts_missing_from_local_catalog(self):
         text_io = FakeTextIO()
         text_io.shortcuts_value = ["保存"]
@@ -187,7 +198,7 @@ class InputEnvironmentTests(unittest.TestCase):
         type_text.assert_called_once_with("new text")
         self.assertEqual(buf.current_segment, "new text")
 
-    def test_insert_dictation_uses_same_tracked_segment_path(self):
+    def test_insert_dictation_uses_same_output_path(self):
         buf = TextBuffer()
         text_io = FakeTextIO()
         env = TyperInputEnvironment(buf, text_io=text_io)
@@ -234,20 +245,6 @@ class InputEnvironmentTests(unittest.TestCase):
             ("confirm_paste_text", "generated"),
         ])
 
-    def test_tracking_events_are_exposed_through_environment(self):
-        buf = TextBuffer()
-        buf.push("hello")
-        env = TyperInputEnvironment(buf)
-
-        env.trim_tracked_segment_end(2)
-        self.assertEqual(buf.current_segment, "hel")
-
-        env.mark_tracked_segment_unsafe()
-        self.assertTrue(buf.cursor_uncertain)
-
-        env.start_new_tracked_segment()
-        self.assertEqual(buf.current_segment, "")
-
     def test_insert_generated_text_moves_out_of_current_explicit_selection(self):
         buf = TextBuffer()
         env = TyperInputEnvironment(buf)
@@ -281,99 +278,6 @@ class InputEnvironmentTests(unittest.TestCase):
         type_text.assert_called_once_with("new text")
         self.assertEqual(result.inserted_text, "new text")
 
-    def test_replace_tracked_segment_refuses_unsafe_segment(self):
-        buf = TextBuffer()
-        buf.push("hello")
-        buf.cursor_uncertain = True
-        env = TyperInputEnvironment(buf)
-
-        with (
-            patch("agent.typer.erase_last") as erase_last,
-            patch("agent.typer.type_text") as type_text,
-        ):
-            with self.assertRaises(UnsafeTrackedSegment):
-                env.replace_tracked_segment("hello", "hi")
-
-        erase_last.assert_not_called()
-        type_text.assert_not_called()
-
-    def test_replace_instruction_target_uses_explicit_selection(self):
-        buf = TextBuffer()
-        buf.push("hello world")
-        env = TyperInputEnvironment(buf)
-
-        with patch("agent.typer.replace_selection") as replace_selection:
-            result = env.replace_instruction_target(
-                TextTarget(selected="world", tracked_segment="hello world"),
-                "earth",
-            )
-
-        replace_selection.assert_called_once_with("earth", original="world")
-        self.assertTrue(result.ok)
-        self.assertEqual(result.changed_text, "world")
-        self.assertEqual(result.replacement_text, "earth")
-        self.assertEqual(buf.current_segment, "hello earth")
-
-    def test_delete_instruction_target_refuses_unsafe_tracked_segment(self):
-        buf = TextBuffer()
-        buf.push("hello")
-        env = TyperInputEnvironment(buf)
-
-        with patch("agent.typer.erase_last") as erase_last:
-            result = env.delete_instruction_target(
-                TextTarget(tracked_segment="hello", tracked_segment_safe=False),
-            )
-
-        erase_last.assert_not_called()
-        self.assertFalse(result.ok)
-        self.assertEqual(result.failure, "unsafe_tracked_segment")
-
-    def test_target_for_revision_prefers_explicit_selection(self):
-        buf = TextBuffer()
-        buf.push("hello world")
-        env = TyperInputEnvironment(buf)
-
-        with patch("agent.typer.get_selection", return_value="world"):
-            result = env.target_for_revision()
-
-        self.assertTrue(result.ok)
-        self.assertEqual(result.original_text, "world")
-
-    def test_target_for_revision_reports_unsafe_tracked_segment(self):
-        buf = TextBuffer()
-        buf.push("hello")
-        buf.cursor_uncertain = True
-        env = TyperInputEnvironment(buf)
-
-        with patch("agent.typer.get_selection", return_value=""):
-            result = env.target_for_revision()
-
-        self.assertFalse(result.ok)
-        self.assertEqual(result.failure, "no_tracked_segment")
-
-    def test_target_for_revision_uses_current_window_without_explicit_selection(self):
-        buf = TextBuffer()
-        buf.push("hello")
-        text_io = FakeTextIO()
-        text_io.caret_window = CaretTextWindow("current sentence.", "caret_sentence")
-        env = TyperInputEnvironment(buf, text_io=text_io)
-
-        result = env.target_for_revision()
-
-        self.assertTrue(result.ok)
-        self.assertEqual(result.original_text, "current sentence.")
-
-    def test_target_for_revision_can_allow_tracked_segment_when_configured(self):
-        buf = TextBuffer()
-        buf.push("hello")
-        env = TyperInputEnvironment(buf, require_selection_for_instruction=False)
-
-        with patch("agent.typer.get_selection", return_value=""):
-            result = env.target_for_revision()
-
-        self.assertTrue(result.ok)
-        self.assertEqual(result.original_text, "hello")
-
     def test_operation_window_prefers_explicit_selection(self):
         buf = TextBuffer()
         buf.push("hello world")
@@ -388,10 +292,9 @@ class InputEnvironmentTests(unittest.TestCase):
         self.assertEqual(result.window.source, "explicit_selection")
 
     def test_operation_window_uses_caret_window_without_explicit_selection(self):
-        buf = TextBuffer()
         text_io = FakeTextIO()
         text_io.caret_window = CaretTextWindow("current sentence.", "caret_sentence")
-        env = TyperInputEnvironment(buf, text_io=text_io)
+        env = TyperInputEnvironment(TextBuffer(), text_io=text_io)
 
         result = env.operation_window_for_instruction()
 
@@ -412,44 +315,17 @@ class InputEnvironmentTests(unittest.TestCase):
         self.assertEqual(result.window.text, "selected")
         self.assertEqual(result.window.source, "explicit_selection")
 
-    def test_operation_window_falls_back_from_caret_window_to_safe_tracked_segment(self):
+    def test_operation_window_does_not_fall_back_to_tracked_segment(self):
         buf = TextBuffer()
         buf.push("safe tracked")
         text_io = FakeTextIO()
         text_io.caret_window = None
-        env = TyperInputEnvironment(
-            buf,
-            require_selection_for_instruction=False,
-            text_io=text_io,
-        )
-
-        result = env.operation_window_for_instruction()
-
-        self.assertTrue(result.ok)
-        self.assertIsNotNone(result.window)
-        self.assertEqual(result.window.text, "safe tracked")
-        self.assertEqual(result.window.source, "tracked_segment")
-        self.assertEqual(
-            text_io.calls,
-            [("get_selection",), ("get_caret_text_window",)],
-        )
-
-    def test_operation_window_prompts_when_no_selection_window_or_safe_tracked_segment(self):
-        buf = TextBuffer()
-        buf.push("unsafe tracked")
-        buf.cursor_uncertain = True
-        text_io = FakeTextIO()
-        text_io.caret_window = None
-        env = TyperInputEnvironment(
-            buf,
-            require_selection_for_instruction=False,
-            text_io=text_io,
-        )
+        env = TyperInputEnvironment(buf, text_io=text_io)
 
         result = env.operation_window_for_instruction()
 
         self.assertFalse(result.ok)
-        self.assertEqual(result.failure, "unsafe_tracked_segment")
+        self.assertEqual(result.failure, "no_tracked_segment")
         self.assertEqual(
             text_io.calls,
             [("get_selection",), ("get_caret_text_window",)],
@@ -475,8 +351,7 @@ class InputEnvironmentTests(unittest.TestCase):
         self.assertEqual(buf.current_segment, "hello earth")
 
     def test_replacement_plan_refuses_ambiguous_target(self):
-        buf = TextBuffer()
-        env = TyperInputEnvironment(buf)
+        env = TyperInputEnvironment(TextBuffer())
         target = TextTarget(selected="hello hello")
         window = OperationWindow("hello hello", target, "explicit_selection")
 
@@ -491,8 +366,7 @@ class InputEnvironmentTests(unittest.TestCase):
         self.assertEqual(result.failure, "ambiguous_target")
 
     def test_replacement_plan_refuses_low_confidence(self):
-        buf = TextBuffer()
-        env = TyperInputEnvironment(buf)
+        env = TyperInputEnvironment(TextBuffer())
         target = TextTarget(selected="hello")
         window = OperationWindow("hello", target, "explicit_selection")
 
@@ -546,77 +420,6 @@ class InputEnvironmentTests(unittest.TestCase):
             [("replace_text_window", "hello world", "hello earth")],
         )
 
-    def test_replacement_plan_refuses_tracked_segment_subtarget_until_range_io_exists(self):
-        buf = TextBuffer()
-        buf.push("hello world")
-        env = TyperInputEnvironment(buf, require_selection_for_instruction=False)
-        target = TextTarget(tracked_segment="hello world", tracked_segment_safe=True)
-        window = OperationWindow("hello world", target, "tracked_segment")
-
-        with patch("agent.typer.erase_last") as erase_last:
-            result = env.apply_replacement_plan(
-                window,
-                ReplacementPlan(target_text="world", replacement_text="earth"),
-            )
-
-        erase_last.assert_not_called()
-        self.assertFalse(result.ok)
-        self.assertEqual(result.failure, "target_not_found")
-
-    def test_apply_reversal_of_insert_erases_text_and_syncs_buffer(self):
-        buf = TextBuffer()
-        buf.push("generated")
-        env = TyperInputEnvironment(buf)
-
-        with patch("agent.typer.erase_last") as erase_last:
-            result = env.apply_operation_reversal(OperationEffect.insert("generated"))
-
-        erase_last.assert_called_once_with("generated")
-        self.assertTrue(result.applied)
-        self.assertEqual(buf.current_segment, "")
-
-    def test_apply_reversal_of_replace_restores_old_text(self):
-        buf = TextBuffer()
-        buf.push("new")
-        env = TyperInputEnvironment(buf)
-
-        with (
-            patch("agent.typer.erase_last") as erase_last,
-            patch("agent.typer.type_text") as type_text,
-        ):
-            result = env.apply_operation_reversal(OperationEffect.replace("old", "new"))
-
-        erase_last.assert_called_once_with("new")
-        type_text.assert_called_once_with("old")
-        self.assertTrue(result.applied)
-        self.assertEqual(buf.current_segment, "old")
-
-    def test_apply_reversal_of_selected_suffix_replace_preserves_segment_prefix(self):
-        buf = TextBuffer()
-        buf.push("hello earth")
-        env = TyperInputEnvironment(buf)
-
-        with (
-            patch("agent.typer.erase_last") as erase_last,
-            patch("agent.typer.type_text") as type_text,
-        ):
-            result = env.apply_operation_reversal(OperationEffect.replace("world", "earth"))
-
-        erase_last.assert_called_once_with("earth")
-        type_text.assert_called_once_with("world")
-        self.assertTrue(result.applied)
-        self.assertEqual(buf.current_segment, "hello world")
-
-    def test_apply_reversal_of_delete_restores_deleted_text(self):
-        buf = TextBuffer()
-        env = TyperInputEnvironment(buf)
-
-        with patch("agent.typer.type_text") as type_text:
-            result = env.apply_operation_reversal(OperationEffect.delete("old"))
-
-        type_text.assert_called_once_with("old")
-        self.assertTrue(result.applied)
-        self.assertEqual(buf.current_segment, "old")
 
 if __name__ == "__main__":
     unittest.main()

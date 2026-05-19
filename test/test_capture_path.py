@@ -1,11 +1,8 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from pynput import keyboard as kb
-
 from agent.capture_path import UtteranceEvent
 from agent.capture_path_runtime import CapturePathRuntime, CaptureStart, PolishToggle
-from agent.keyboard_monitor import KeyboardMonitor
 from agent.push_to_talk import PushToTalk
 
 
@@ -58,23 +55,6 @@ class CapturePathTests(unittest.TestCase):
             ptt._on_press(ptt._ptt_keys[0])
 
         start_recording.assert_called_once_with()
-
-    def test_toggle_key_works_without_keyboard_monitor_side_effects(self):
-        on_dictation = MagicMock()
-        monitor = MagicMock()
-        ptt = PushToTalk(on_dictation, ptt_key="a", toggle_key="b", kbd_monitor=monitor)
-
-        ptt._on_press(ptt._toggle_keys[0])
-
-        monitor.process_press.assert_not_called()
-
-    def test_enter_marks_tracked_segment_unsafe(self):
-        env = MagicMock()
-        monitor = KeyboardMonitor(env)
-
-        monitor.process_press(kb.Key.enter)
-
-        env.mark_tracked_segment_unsafe.assert_called_once_with()
 
     def test_capture_path_runtime_blocks_capture_when_disabled(self):
         runtime = CapturePathRuntime()

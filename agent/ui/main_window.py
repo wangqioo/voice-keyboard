@@ -255,7 +255,7 @@ class _SettingsTab(NSObject):
 _MODE_LABEL = {
     "dictate": "听写", "polish": "润色", "ai": "AI", "edit": "编辑",
     "ai_chat": "AI 聊天", "ai_write": "AI 写作", "ai_edit": "AI 编辑",
-    "ai_delete": "AI 删除", "ai_undo": "AI 撤回", "ai_shortcut": "AI 快捷键",
+    "ai_delete": "AI 删除", "ai_undo": "撤销", "ai_shortcut": "AI 快捷键",
 }
 
 

@@ -163,17 +163,12 @@ llm:
 # Instruction Mode
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 instruction_mode:
-  # false 时，没有 Explicit Selection 也会尝试使用当前输入环境的可安全文本窗口。
-  # 如果当前窗口不可获取，再退回到安全的 Tracked Segment。
-  require_selection_for_edit: false
   intent_fallbacks:
     # 安全类兜底：当前运行时不自动执行多步骤指令。
     multi_step_guard: true
     # 目标明确兜底：已有 Explicit Selection 且语音明显是翻译/润色/改写时，
     # 即使模型误判成写作/聊天，也按编辑当前选区处理。
     selected_edit_override: true
-    # 语义纠错兜底：默认关闭，避免把用户的询问/分析误改成编辑操作。
-    edit_hint_override: false
     # 便利类兜底：仅在“我的 X 是什么 / 插入 X”等查询或插入句式下模糊匹配可复用文本。
     memo_fuzzy_recall: true
 
@@ -185,6 +180,13 @@ typing:
   shortcuts:
     # 全局快捷键：语音说“刷新”时向当前活动应用发送 Cmd+R。
     刷新: cmd+r
+
+  # 如果某个应用快捷键被系统或截图工具等全局热键抢占，可以在这里屏蔽。
+  # 被屏蔽的动作不会进入 Shortcut Catalog，也不会被 Instruction Mode 执行。
+  blocked_shortcuts:
+    # - 多维表格居中
+  blocked_shortcut_keys:
+    # - cmd+shift+e
 
   # 实验性：活动应用快捷键。
   # Instruction Mode 会识别当前活动应用，并优先使用这里的映射。

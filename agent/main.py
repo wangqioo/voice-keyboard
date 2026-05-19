@@ -157,13 +157,12 @@ def make_serial_handlers(buf: TextBuffer, history: History | None = None, input_
 
 # ── STT 回调 ───────────────────────────────────────────────────────
 
-def make_utterance_handler(stt_client, buf: TextBuffer, kbd_mon=None, editor=None,
+def make_utterance_handler(stt_client, buf: TextBuffer, editor=None,
                            status_window=None, history: History | None = None,
                            input_environment=None):
     return _make_dictation_utterance_handler(
         stt_client,
         buf,
-        kbd_mon=kbd_mon,
         editor=editor,
         status_window=status_window,
         history=history,
@@ -291,8 +290,6 @@ def main():
             backend.stop()
             new_bk = build_backend(args, buf, status_window, history)
             backend.cfg          = new_bk.cfg
-            backend.kbd_monitor  = new_bk.kbd_monitor
-            backend.mouse_monitor= new_bk.mouse_monitor
             backend.reader       = new_bk.reader
             backend.audio        = new_bk.audio
             print("[agent] 热重载完成")

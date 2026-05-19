@@ -2,11 +2,6 @@
 记录 Voice Keyboard Engine 打出的文字历史，供 Instruction Mode 使用。
 
 只记录通过 Voice Keyboard Engine 打出去的内容，用户手动输入的内容不在此范围。
-Input Environment adapter 会把 Backspace 等事件同步到这里。
-
-Tracked Segment 安全标志：
-  鼠标点击等事件会让追踪位置变得不安全。
-  Instruction Mode 修改已有文本时，只有安全的 Tracked Segment 才能被隐式修改。
 """
 
 
@@ -15,7 +10,6 @@ class TextBuffer:
         self._entries: list[str]  = []
         self._max                 = max_entries
         self._segment_start: int  = 0   # Tracked Segment 在 _entries 中的起始索引
-        self.cursor_uncertain: bool = False   # Tracked Segment 是否不安全
 
     # ── 写入 / 读取 ────────────────────────────────────────────────
 
@@ -26,12 +20,6 @@ class TextBuffer:
             if len(self._entries) > self._max:
                 self._entries.pop(0)
                 self._segment_start = max(0, self._segment_start - 1)
-            # 新打出一段话 → 说明光标就在刚打的文字后面，位置可信
-            self.cursor_uncertain = False
-
-    def new_segment(self) -> None:
-        """回车或鼠标点击时调用，标记新的 Tracked Segment 起始位置。"""
-        self._segment_start = len(self._entries)
 
     def pop_last(self) -> str:
         return self._entries.pop() if self._entries else ""
@@ -62,7 +50,6 @@ class TextBuffer:
             self._segment_start = len(self._entries) - 1
         else:
             self._segment_start = len(self._entries)
-        self.cursor_uncertain = False
 
     def clear(self) -> None:
         self._entries.clear()

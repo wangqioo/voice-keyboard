@@ -6,22 +6,23 @@ This roadmap uses the domain language from `CONTEXT.md` and the architecture lan
 
 Status: in progress, accepted by ADR-0002 and ADR-0005.
 
-Deepen the module that owns Explicit Selection, Tracked Segment safety, insertion, replacement, deletion, and cursor movement. This is the first priority because Instruction Mode depends on these rules for Text Revision, Text Removal, Text Generation, Reusable Text Operation, and Operation Reversal.
+Deepen the module that owns Explicit Selection, insertion, replacement, deletion, and current-input-window behavior. This is the first priority because Instruction Mode depends on these rules for Text Revision, Text Removal, Text Generation, Reusable Text Operation, and Shortcut Invocation.
 
 Initial implementation:
 
 - `agent/input_environment.py`
 - `agent/text_io.py`
 - `AIHandler` now uses the Input Environment seam for text-side effects.
-- Input Environment now owns Text Revision / Text Removal target lookup and Operation Reversal text effects.
+- Input Environment now owns Text Revision / Text Removal target lookup and text-side effects.
 - Input Environment now owns generated-text insertion around Explicit Selection for Text Generation and Reusable Text Operation output.
 - Platform text IO calls now sit behind a small adapter used by the Input Environment implementation.
-- Text Revision and Text Removal now prefer Explicit Selection, then the current safe text window exposed by the Input Environment, then safe Tracked Segment fallback.
-- Next targeting work should broaden platform support for focused-field Operation Windows and keep separating that window from the smaller Operation Target that a provider proposes replacing.
+- Text Revision and specific Text Removal now require Explicit Selection unless the user clearly asks for the whole current Operation Window.
+- Generic delete can remove the current Operation Window, or fall back to Select All + Delete when no window is available.
+- Next targeting work should broaden platform support for focused-field Operation Windows while preserving the rule that no-selection local partial edits fail closed.
 
 ## 2. Instruction Mode Execution
 
-Status: in progress, accepted by ADR-0003 and bounded by ADR-0007.
+Status: in progress, bounded by ADR-0007.
 
 After Input Environment is behind a seam, deepen Instruction Mode around Voice Text Operation execution.
 
@@ -31,22 +32,35 @@ Target direction:
 - Keep prompt construction and deterministic fallbacks in `ai_intent`.
 - Move text-side effects into the Input Environment interface.
 - Keep Reusable Text Memory behind a small interface.
-- Make Operation Reversal depend on recorded operation effects rather than ad hoc tuples.
+- Treat spoken undo as a Shortcut Invocation of the current application undo action.
 
 Initial implementation:
 
-- `agent/operation_history.py`
 - `agent/voice_text_operation.py`
 - `agent/instruction_executor.py`
 - `agent/reusable_text_memory.py`
-- `AIHandler` now records `OperationEffect` values and Operation Reversal consumes those effects.
+- `AIHandler` now leaves undo to the executor as a Shortcut Invocation.
 - `AIHandler` now dispatches typed Voice Text Operation values instead of raw classifier dictionaries.
 - Instruction Mode execution now lives behind an executor seam, leaving `AIHandler` focused on runtime orchestration.
 - Reusable Text Operation rules and Reusable Text Memory key matching now live behind a Reusable Text Memory module; the executor only applies insert/show results to the Input Environment.
-- Text Revision and Text Removal should move toward structured Replacement Plans instead of full-context rewrites.
+- Text Revision and Text Removal use structured Replacement Plans for selected text and whole-scope requests instead of full-context rewrites.
 - Atomic Operation Stack support should be a later slice after stack data structures, local risk policy, and executor sequencing exist. Until then, the classifier should ask users to split explicit multi-step instructions.
 
-## 3. Capture Path
+## 3. Application Shortcut Catalog
+
+Status: in progress, accepted by ADR-0008.
+
+Deepen Shortcut Invocation around local application-aware catalogs so Voice Keyboard Engine can act as a lightweight voice-to-keyboard layer in Office, WPS, Feishu, and other current Input Environments.
+
+Initial implementation:
+
+- `agent/app_shortcut_presets.py`
+- macOS built-in presets now cover Microsoft Word, Microsoft Excel, Microsoft PowerPoint, WPS Office, and Feishu/Lark.
+- `agent.typer` still owns key parsing, shortcut policy lookup, and key emission while consuming the built-in presets.
+- Instruction Mode already receives the current active application and local Shortcut Catalog names, so a Speech Interpretation Provider can choose a named Shortcut Invocation without inventing key sequences.
+- Next work should move catalog composition, aliases, and risk metadata out of `agent.typer` into a deeper Shortcut Catalog module, then add Windows app identities and presets.
+
+## 4. Capture Path
 
 Status: in progress.
 
@@ -65,7 +79,7 @@ Initial implementation:
 - `PushToTalk` now dispatches typed `UtteranceEvent` values internally while keeping the existing callback adapter interface.
 - `PushToTalk` now delegates enabled/disabled state, active capture pairing, and Dictation Mode polish toggling to a Capture Path runtime state machine.
 
-## 4. Speech Interpretation Provider Adapters
+## 5. Speech Interpretation Provider Adapters
 
 Status: in progress.
 
@@ -84,7 +98,7 @@ Initial implementation:
 - TypeUp backend Speech Interpretation Provider adapters now share credential reload, refresh, auth header, and error-message handling.
 - Runtime composition now constructs Dictation Mode, micro-polish, Instruction Mode speech recognition, and text-operation providers through one factory.
 
-## 5. Runtime Composition
+## 6. Runtime Composition
 
 Status: in progress.
 

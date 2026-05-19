@@ -19,30 +19,27 @@ class DictationModeModuleTests(unittest.TestCase):
         env = MagicMock()
         status = MagicMock()
         history = MagicMock()
-        kbd = MagicMock()
         env.insert_output_text.return_value = TextInsertionResult(inserted_text=stt_text)
         module = DictationMode(
             stt,
             env,
-            kbd_monitor=kbd,
             status_window=status,
             history=history,
         )
-        return module, stt, env, status, history, kbd
+        return module, stt, env, status, history
 
     def test_normal_dictation_inserts_text_and_records_history(self):
-        module, stt, env, status, history, kbd = self.make_module("  ### hello  ")
+        module, stt, env, status, history = self.make_module("  ### hello  ")
 
         module.handle_utterance(b"pcm")
 
         stt.transcribe.assert_called_once_with(b"pcm")
         env.insert_output_text.assert_called_once_with("hello")
         history.append.assert_called_once_with("dictate", "hello", "ok", "")
-        kbd.notify_voice_output.assert_called_once_with()
         status.set_state.assert_called_once_with("idle")
 
     def test_normal_dictation_strips_added_punctuation_from_short_fragment(self):
-        module, _stt, env, _status, history, _kbd = self.make_module("时间复杂度。")
+        module, _stt, env, _status, history = self.make_module("时间复杂度。")
 
         module.handle_utterance(b"pcm")
 
@@ -50,7 +47,7 @@ class DictationModeModuleTests(unittest.TestCase):
         history.append.assert_called_once_with("dictate", "时间复杂度", "ok", "")
 
     def test_normal_dictation_converts_clear_spoken_punctuation(self):
-        module, _stt, env, _status, history, _kbd = self.make_module(
+        module, _stt, env, _status, history = self.make_module(
             "例如苹果香蕉感叹号"
         )
 
@@ -75,7 +72,7 @@ class DictationModeModuleTests(unittest.TestCase):
         history.append.assert_called_once_with("polish", "polished by stt", "ok", "")
 
     def test_polish_mode_can_apply_text_polisher_after_stt(self):
-        module, _stt, env, status, history, _kbd = self.make_module("嗯 hello")
+        module, _stt, env, status, history = self.make_module("嗯 hello")
         editor = MagicMock()
         editor.chat.return_value = "润色结果：Hello."
         module.text_polisher = editor
@@ -88,7 +85,7 @@ class DictationModeModuleTests(unittest.TestCase):
         history.append.assert_called_once_with("polish", "Hello.", "ok", "")
 
     def test_polish_failure_keeps_original_text(self):
-        module, _stt, env, _status, history, _kbd = self.make_module("original")
+        module, _stt, env, _status, history = self.make_module("original")
         editor = MagicMock()
         editor.chat.side_effect = RuntimeError("no llm")
         module.text_polisher = editor
@@ -99,7 +96,7 @@ class DictationModeModuleTests(unittest.TestCase):
         history.append.assert_called_once_with("polish", "original", "ok", "")
 
     def test_stt_error_records_error_without_insert(self):
-        module, stt, env, status, history, _kbd = self.make_module()
+        module, stt, env, status, history = self.make_module()
         stt.transcribe.side_effect = RuntimeError("offline")
 
         module.handle_utterance(b"pcm")
@@ -109,7 +106,7 @@ class DictationModeModuleTests(unittest.TestCase):
         status.set_state.assert_called_once_with("error_stt")
 
     def test_empty_stt_records_empty_without_insert(self):
-        module, _stt, env, status, history, _kbd = self.make_module("  ###  ")
+        module, _stt, env, status, history = self.make_module("  ###  ")
 
         module.handle_utterance(b"pcm")
 
@@ -118,17 +115,16 @@ class DictationModeModuleTests(unittest.TestCase):
         status.set_state.assert_called_once_with("empty_stt")
 
     def test_typing_error_records_original_text_without_idle_status(self):
-        module, _stt, env, status, history, kbd = self.make_module("hello")
+        module, _stt, env, status, history = self.make_module("hello")
         env.insert_output_text.side_effect = RuntimeError("blocked")
 
         module.handle_utterance(b"pcm")
 
         history.append.assert_called_once_with("dictate", "hello", "error", "typing: blocked")
         status.set_state.assert_called_once_with("error_typing")
-        kbd.notify_voice_output.assert_not_called()
 
     def test_copied_no_focus_output_is_not_recorded_as_typing_error(self):
-        module, _stt, env, status, history, kbd = self.make_module("hello")
+        module, _stt, env, status, history = self.make_module("hello")
         env.insert_output_text.return_value = MagicMock(
             ok=False,
             failure="copied_to_clipboard",
@@ -140,10 +136,9 @@ class DictationModeModuleTests(unittest.TestCase):
         history.append.assert_called_once_with("dictate", "hello", "copied", "no_focused_input")
         status.show_message.assert_called_once_with("已复制：hello", 5.0)
         status.set_state.assert_not_called()
-        kbd.notify_voice_output.assert_not_called()
 
     def test_status_flags_preserve_segment_behavior(self):
-        module, _stt, env, status, _history, _kbd = self.make_module("hello")
+        module, _stt, env, status, _history = self.make_module("hello")
 
         module.handle_utterance(b"pcm", clear_status=False, progress_status=False)
 

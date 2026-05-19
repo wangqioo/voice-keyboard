@@ -118,7 +118,6 @@ class DictationMode:
 
     transcriber: SpeechTranscriber
     input_environment: object
-    kbd_monitor: object | None = None
     text_polisher: TextPolisher | None = None
     status_window: object | None = None
     history: object | None = None
@@ -177,8 +176,6 @@ class DictationMode:
             return
 
         self._append_history(mode, text, "ok")
-        if self.kbd_monitor is not None:
-            self.kbd_monitor.notify_voice_output()
         if clear_status:
             self._set_status("idle")
             print("[typeup] 输入完成")
@@ -236,7 +233,6 @@ class DictationMode:
 def make_utterance_handler(
     stt_client,
     buf: TextBuffer,
-    kbd_mon=None,
     editor=None,
     status_window=None,
     history=None,
@@ -246,7 +242,6 @@ def make_utterance_handler(
     mode = DictationMode(
         stt_client,
         env,
-        kbd_monitor=kbd_mon,
         text_polisher=editor,
         status_window=status_window,
         history=history,
