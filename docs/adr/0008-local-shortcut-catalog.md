@@ -12,6 +12,6 @@ The built-in catalog should stay curated and narrow. Default application presets
 
 Application launch actions may be broader than application shortcuts because launching an installed app does not depend on the active Input Environment surface. The engine may expose launch actions discovered from local installed applications, plus configured aliases, but a Speech Interpretation Provider still must choose a discovered or configured action instead of inventing an executable app name.
 
-macOS window management actions should be treated as System Actions instead of keyboard shortcut aliases when the engine can execute them through Accessibility. This keeps actions such as left half, right half, maximize, and center independent from application menus and global hotkey collisions.
+macOS window management actions should be treated as named System Actions, but their current implementation should dispatch configured local window-management shortcuts instead of calculating Accessibility window frames. This keeps voice intent constrained to catalog names while letting the user's chosen macOS window manager own the actual placement behavior.
 
 The local engine keeps shortcut metadata, including source and risk signals. This keeps Shortcut Invocation aligned with voice-driven keyboard efficiency instead of provider-generated automation.

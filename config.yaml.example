@@ -206,7 +206,15 @@ typing:
     #   macos_bundle_id: md.obsidian
     #   macos_name: Obsidian
 
-  # macOS 系统窗口动作是内置系统动作，不占用键盘组合键。
+  # macOS 系统窗口动作是内置系统动作，执行时只发送这里配置的窗口管理快捷键。
+  # 默认值按常见 Rectangle/Raycast 风格；如果你的窗口管理器不同，可以在本机 config.yaml 覆盖。
+  macos_window_shortcuts:
+    fullscreen_toggle: ctrl+cmd+f
+    left_half: ctrl+option+left
+    right_half: ctrl+option+right
+    maximize: ctrl+option+enter
+    center: ctrl+option+c
+
   # 当前内置动作：窗口左半屏、窗口右半屏、窗口左移、窗口右移、窗口最大化、窗口居中。
   # 如果某个动作不想让 Instruction Mode 执行，可写入 blocked_shortcuts。
 
