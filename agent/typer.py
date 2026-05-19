@@ -71,8 +71,6 @@ _use_clipboard_mode: bool = False
 _last_focus_fallback_log: tuple[str, int | None] | None = None
 _BLOCKED_SHORTCUT_NAMES: set[str] = set()
 _BLOCKED_SHORTCUT_KEY_SEQUENCES: set[tuple[str, ...]] = set()
-_MACOS_WINDOW_ACTION_SHORTCUTS: dict[str, list] = {}
-_MACOS_FULLSCREEN_TOGGLE_SHORTCUT: list = []
 
 
 @dataclass(frozen=True)
@@ -102,7 +100,6 @@ def init(cfg: dict) -> None:
     _APP_SHORTCUTS.clear()
     _load_app_shortcuts(_configured_app_shortcuts(cfg))
     app_launcher.load_app_launches(cfg.get("app_launches", {}))
-    _load_macos_window_action_shortcuts(cfg)
 
 
 def is_erasing() -> bool:
@@ -1013,15 +1010,11 @@ def _system_actions_for_platform() -> dict[str, str]:
 def _run_macos_window_action(action: str) -> bool:
     if _OS != "Darwin":
         return False
-    _ensure_macos_window_action_shortcuts()
     return macos_window_actions.run_window_action(
         action,
         current_application(),
         ApplicationServices,
-        _press_keys,
-        _MACOS_WINDOW_ACTION_SHORTCUTS,
-        _MACOS_FULLSCREEN_TOGGLE_SHORTCUT,
-        sleep=time.sleep,
+        NSScreen,
     )
 
 
@@ -1099,10 +1092,6 @@ def _app_launch(name: str) -> ApplicationLaunchSpec | None:
 
 def _app_launches_for_system() -> dict[str, ApplicationLaunchSpec]:
     return app_launcher.app_launches_for_system(_OS)
-
-
-def _discover_macos_app_launches() -> dict[str, ApplicationLaunchSpec]:
-    return app_launcher.discover_macos_app_launches()
 
 
 def _app_shortcut(app: ActiveApplication, name: str) -> list | None:
@@ -1194,39 +1183,6 @@ def _load_app_shortcuts(application_shortcuts) -> None:
             _APP_SHORTCUTS[key] = parsed_shortcuts
             _APP_SHORTCUTS[key.lower()] = parsed_shortcuts
             print(f"[typer] 已加载活动应用快捷键: {key}")
-
-
-def _load_macos_window_action_shortcuts(cfg: dict) -> None:
-    global _MACOS_WINDOW_ACTION_SHORTCUTS, _MACOS_FULLSCREEN_TOGGLE_SHORTCUT
-    _MACOS_WINDOW_ACTION_SHORTCUTS = {
-        action: _parse_shortcut_keys(keys)
-        for action, keys in macos_window_actions.DEFAULT_WINDOW_ACTION_SHORTCUTS.items()
-    }
-    _MACOS_FULLSCREEN_TOGGLE_SHORTCUT = _parse_shortcut_keys(
-        macos_window_actions.FULLSCREEN_TOGGLE_SHORTCUT
-    )
-    configured = cfg.get("macos_window_shortcuts", {})
-    if not isinstance(configured, dict):
-        return
-    for action, keys in configured.items():
-        if action == "fullscreen_toggle":
-            try:
-                _MACOS_FULLSCREEN_TOGGLE_SHORTCUT = _parse_shortcut_keys(keys)
-            except ValueError as e:
-                print(f"[typer] 忽略 macOS 全屏切换快捷键 {keys!r}: {e}")
-            continue
-        if action not in macos_window_actions.WINDOW_ACTIONS.values():
-            print(f"[typer] 忽略未知 macOS 窗口动作 {action!r}")
-            continue
-        try:
-            _MACOS_WINDOW_ACTION_SHORTCUTS[action] = _parse_shortcut_keys(keys)
-        except ValueError as e:
-            print(f"[typer] 忽略 macOS 窗口动作快捷键 {action!r}: {e}")
-
-
-def _ensure_macos_window_action_shortcuts() -> None:
-    if not _MACOS_WINDOW_ACTION_SHORTCUTS or not _MACOS_FULLSCREEN_TOGGLE_SHORTCUT:
-        _load_macos_window_action_shortcuts({})
 
 
 def _configured_app_shortcuts(cfg: dict) -> dict:

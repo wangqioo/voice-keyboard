@@ -34,10 +34,12 @@ COMMON_APP_LAUNCH_ALIASES = {
     "Google Chrome": ("谷歌浏览器", "Chrome", "谷歌"),
     "Lark": ("飞书",),
     "WeChat": ("微信",),
-    "NeteaseMusic": ("网易云音乐",),
+    "NeteaseMusic": ("网易云音乐", "网易云"),
+    "NetEaseMusic": ("网易云音乐", "网易云"),
     "TencentMeeting": ("腾讯会议",),
     "wpsoffice": ("WPS",),
     "iTerm": ("终端",),
+    "iTerm2": ("终端",),
     "Terminal": ("终端",),
 }
 
