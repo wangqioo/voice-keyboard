@@ -45,6 +45,12 @@ class VoiceTextOperationTests(unittest.TestCase):
             VoiceTextOperation(kind="reusable_text_list"),
         )
 
+    def test_legacy_memo_operation_types_normalize_to_reusable_text(self):
+        self.assertEqual(
+            operation_from_intent({"type": "memo_recall", "key": "邮箱"}),
+            VoiceTextOperation(kind="reusable_text_recall", key="邮箱"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

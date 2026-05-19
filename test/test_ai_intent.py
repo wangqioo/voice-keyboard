@@ -132,6 +132,12 @@ class AIIntentTests(unittest.TestCase):
 
         self.assertEqual(result, {"type": "chat", "reply": "不知道"})
 
+    def test_legacy_memo_fuzzy_recall_config_still_disables_reusable_text_fallback(self):
+        self.assertEqual(
+            IntentFallbackOptions.from_config({"memo_fuzzy_recall": False}),
+            IntentFallbackOptions(reusable_text_memory_fuzzy_recall=False),
+        )
+
     def test_reusable_text_memory_records_include_personal_aliases(self):
         memory_entries = MagicMock()
         memory_entries.keys.return_value = ["白光宇最喜欢说的话"]

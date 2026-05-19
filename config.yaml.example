@@ -191,8 +191,8 @@ typing:
 
   # 活动应用快捷键。
   # Instruction Mode 会识别当前活动应用，并优先使用这里的映射。
-  # macOS 内置只覆盖当前产品切片：Microsoft Office、WPS Office、飞书/Lark。
-  # 其他应用需要显式写在本机配置里，不进入默认 Shortcut Catalog。
+  # 当前内置应用快捷键预设为空；应用特定快捷键需要显式写在本机配置里。
+  # 旧字段 experimental_app_shortcuts / app_shortcuts 仍会被读取，建议迁移到 application_shortcuts。
   # key 可以写 bundle id（推荐）或应用名。macOS bundle id 可从日志里的活动应用信息确认。
   application_shortcuts:
     # com.example.ProductivityApp:

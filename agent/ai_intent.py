@@ -56,12 +56,14 @@ class IntentFallbackOptions:
     def from_config(cls, cfg: dict | None) -> "IntentFallbackOptions":
         if not isinstance(cfg, dict):
             return cls()
+        reusable_text_memory_fuzzy_recall = cfg.get(
+            "reusable_text_memory_fuzzy_recall",
+            cfg.get("memo_fuzzy_recall", True),
+        )
         return cls(
             multi_step_guard=bool(cfg.get("multi_step_guard", True)),
             selected_edit_override=bool(cfg.get("selected_edit_override", True)),
-            reusable_text_memory_fuzzy_recall=bool(
-                cfg.get("reusable_text_memory_fuzzy_recall", True)
-            ),
+            reusable_text_memory_fuzzy_recall=bool(reusable_text_memory_fuzzy_recall),
         )
 
 

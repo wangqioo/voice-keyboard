@@ -32,5 +32,23 @@ class ReusableTextMemoryStoreTests(unittest.TestCase):
                 {"地址": "上海"},
             )
 
+    def test_imports_legacy_memos_json_when_new_store_is_missing(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            legacy_path = root / "memos.json"
+            new_path = root / "reusable_text_memory.json"
+            legacy_path.write_text(
+                json.dumps({"邮箱": "me@example.com"}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            store = ReusableTextMemoryStore(new_path, legacy_path=legacy_path)
+
+            self.assertEqual(store.get("邮箱"), "me@example.com")
+            self.assertEqual(
+                json.loads(new_path.read_text(encoding="utf-8")),
+                {"邮箱": "me@example.com"},
+            )
+
 if __name__ == "__main__":
     unittest.main()

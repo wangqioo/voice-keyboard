@@ -6,14 +6,14 @@ Shortcut Invocation is intentionally not a power-user macro surface. The catalog
 
 ## Current Slice
 
-- `agent/app_shortcut_presets.py` owns built-in macOS Application Shortcut Catalog presets.
+- `agent/app_shortcut_presets.py` is the placeholder for built-in macOS Application Shortcut Catalog presets. It is intentionally empty in the current slice.
 - `agent/typer.py` keeps the platform key parsing and key emission implementation.
 - `agent/local_operation_catalog.py` owns local operation catalog entries, operation kind metadata, de-duplication, blocking, and high-risk policy decisions. The user-facing UI can still present these as `快捷键` or shortcut actions.
 - `agent/app_launcher.py` owns application launch config parsing, macOS `.app` discovery, spoken launch aliases, and cross-platform launch execution.
 - `agent/macos_window_actions.py` owns macOS Accessibility window frame lookup, target rectangle calculation, and window frame mutation.
 - The engine should prefer a small Global Shortcut Catalog for universal editing actions before application-specific catalogs. Current universal actions include save, copy, cut, paste, undo, redo, select all, bold, italic, underline, and find.
 - Application presets should not repeat universal editing actions with the same key sequence. They should contain only app-specific actions or app overrides where the same user-visible action needs a different key sequence.
-- The current macOS built-in presets are intentionally narrow and include only the current product slice: Microsoft Word, Microsoft Excel, Microsoft PowerPoint, WPS Office, and Feishu/Lark.
+- The current macOS built-in application shortcut presets are empty. Application-specific shortcuts for Office, WPS, Feishu/Lark, browsers, developer tools, and chat apps must be added through local config until there is a validated surface-aware adapter.
 - Browsers, developer tools, generic chat apps, screenshot tools, and other productivity apps should not enter the built-in catalog by default. They can still be added locally through `typing.application_shortcuts` when a user wants to test them.
 - Application launch is broader than application shortcuts. On macOS, the engine discovers installed `.app` bundles from `/Applications`, `~/Applications`, `/System/Applications`, and `/System/Applications/Utilities`, then exposes `打开<应用名>` actions for those local apps.
 - `agent/app_launch_presets.py` keeps high-value spoken aliases such as `打开飞书`, `打开谷歌浏览器`, and `打开PPT` stable when the installed bundle name differs from what the user says.
@@ -21,9 +21,9 @@ Shortcut Invocation is intentionally not a power-user macro surface. The catalog
 - macOS system window actions are built-in System Actions, not physical keyboard shortcuts. The current small set is `窗口左半屏`, `窗口右半屏`, `窗口左移`, `窗口右移`, `窗口最大化`, and `窗口居中`. They move the frontmost window through Accessibility frame updates so they do not conflict with Office, WPS, Feishu, or third-party global hotkeys. If the frontmost window is full screen, the engine first attempts to exit full screen through `AXFullScreen=false`, re-acquires the regular frontmost window after the Space transition, raises it, and then applies the requested window frame.
 - The product-facing customization entry is the menu bar app: Voice Keyboard -> `快捷键...`. The tab lists the current Shortcut Catalog, labels internal operation kinds such as key action, app launch, and window action, allows users to disable/restore named actions, and saves custom global actions under `typing.shortcuts`.
 - Additional local application launch aliases belong in `typing.app_launches`. The Speech Interpretation Provider still must choose a discovered or configured action; it should not invent executable app names.
-- WPS Office exposes multiple surfaces inside one application. WPS surface-specific actions should use prefixed names such as `WPS文字居中`, `WPS表格自动求和`, or `WPS演示新建幻灯片` instead of generic names like `居中` or `筛选`.
-- WPS built-in actions should cover only common formatting, editing, and presentation operations. Exhaustive menu coverage stays out until there is a reliable surface detector and validation path.
-- The Feishu/Lark presets intentionally expose only conservative app-specific actions while the engine cannot reliably identify the active Feishu surface. Current app-specific actions include send, confirm, newline, and new document; universal editing actions come from the Global Shortcut Catalog.
+- WPS Office exposes multiple surfaces inside one application. Future WPS surface-specific actions should use prefixed names such as `WPS文字居中`, `WPS表格自动求和`, or `WPS演示新建幻灯片` instead of generic names like `居中` or `筛选`.
+- Future WPS built-in actions should cover only common formatting, editing, and presentation operations. Exhaustive menu coverage stays out until there is a reliable surface detector and validation path.
+- Feishu/Lark built-in application shortcuts are currently empty while the engine cannot reliably identify the active Feishu surface. Universal editing actions come from the Global Shortcut Catalog.
 - Do not expose Feishu surface-specific actions such as search, find, filter, align, font size, or font color until the engine can tell whether the user is in chat, docs, sheets, Bitable, comments, or another Feishu surface.
 - Do not use alias tables to guess Feishu surface-specific actions from speech such as "表格查找". If the exact surface is unknown, prefer not executing over executing the wrong shortcut.
 - `typing.blocked_shortcuts` and `typing.blocked_shortcut_keys` let local config suppress actions or physical key sequences that are stolen by system or third-party global shortcuts.
@@ -32,11 +32,12 @@ Shortcut Invocation is intentionally not a power-user macro surface. The catalog
 
 ## Next Slices
 
-1. Add Windows application identities and shortcut presets for Word, Excel, PowerPoint, WPS, and Feishu.
-2. Add a Feishu surface detector before reintroducing surface-specific Shortcut Invocation names.
-3. Add Feishu Bitable runtime validation for menu-only formatting actions such as search, filter, font size, font color, and alignment variants.
-4. Add a confirmation path for high-risk Shortcut Invocation such as send, submit, close, broad delete, and cross-application actions.
-5. Add a small runtime diagnostic command that prints the current active application label and current Application Shortcut Catalog.
+1. Add a validated surface-aware adapter for application-specific Office, WPS, and Feishu/Lark shortcut presets.
+2. Add Windows application identities and shortcut presets for the same validated slice.
+3. Add a Feishu surface detector before reintroducing surface-specific Shortcut Invocation names.
+4. Add Feishu Bitable runtime validation for menu-only formatting actions such as search, filter, font size, font color, and alignment variants.
+5. Add a confirmation path for high-risk Shortcut Invocation such as send, submit, close, broad delete, and cross-application actions.
+6. Add a small runtime diagnostic command that prints the current active application label and current Application Shortcut Catalog.
 
 ## Feishu OpenAPI Note
 

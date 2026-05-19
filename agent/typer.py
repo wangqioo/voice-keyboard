@@ -99,7 +99,7 @@ def init(cfg: dict) -> None:
     _load_blocked_shortcuts(cfg)
     _load_custom_shortcuts(cfg.get("shortcuts", {}))
     _APP_SHORTCUTS.clear()
-    _load_app_shortcuts(cfg.get("application_shortcuts", {}))
+    _load_app_shortcuts(_configured_app_shortcuts(cfg))
     app_launcher.load_app_launches(cfg.get("app_launches", {}))
 
 
@@ -1203,7 +1203,25 @@ def _load_app_shortcuts(application_shortcuts) -> None:
             key = app_key.strip()
             _APP_SHORTCUTS[key] = parsed_shortcuts
             _APP_SHORTCUTS[key.lower()] = parsed_shortcuts
-            print(f"[typer] 已加载实验性活动应用快捷键: {key}")
+            print(f"[typer] 已加载活动应用快捷键: {key}")
+
+
+def _configured_app_shortcuts(cfg: dict) -> dict:
+    merged: dict = {}
+    for key in ("app_shortcuts", "experimental_app_shortcuts", "application_shortcuts"):
+        value = cfg.get(key)
+        if not isinstance(value, dict):
+            continue
+        for app_key, shortcuts in value.items():
+            if not isinstance(shortcuts, dict):
+                merged[app_key] = shortcuts
+                continue
+            existing = merged.get(app_key)
+            if isinstance(existing, dict):
+                merged[app_key] = {**existing, **shortcuts}
+            else:
+                merged[app_key] = dict(shortcuts)
+    return merged
 
 
 def _load_app_launches(app_launches) -> None:

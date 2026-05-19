@@ -39,6 +39,44 @@ class TyperShortcutTests(unittest.TestCase):
                 [Key.cmd, Key.enter],
             )
 
+    def test_init_loads_legacy_experimental_app_shortcuts_from_config(self):
+        with patch.dict(typer._APP_SHORTCUTS, {}, clear=True):
+            typer.init({
+                "experimental_app_shortcuts": {
+                    "com.openai.codex": {
+                        "发送": "cmd+enter",
+                    },
+                },
+            })
+
+            self.assertEqual(
+                typer._APP_SHORTCUTS["com.openai.codex"]["发送"],
+                [Key.cmd, Key.enter],
+            )
+
+    def test_init_merges_legacy_and_current_app_shortcut_fields_by_action(self):
+        with patch.dict(typer._APP_SHORTCUTS, {}, clear=True):
+            typer.init({
+                "experimental_app_shortcuts": {
+                    "com.openai.codex": {
+                        "发送": "cmd+enter",
+                    },
+                },
+                "application_shortcuts": {
+                    "com.openai.codex": {
+                        "新建会话": "cmd+n",
+                    },
+                },
+            })
+
+            self.assertEqual(
+                typer._APP_SHORTCUTS["com.openai.codex"],
+                {
+                    "发送": [Key.cmd, Key.enter],
+                    "新建会话": [Key.cmd, typer.KeyCode.from_char("n")],
+                },
+            )
+
     def test_send_shortcut_prefers_active_application_shortcut(self):
         app = typer.ActiveApplication("Codex", "com.openai.codex", 42)
         with (

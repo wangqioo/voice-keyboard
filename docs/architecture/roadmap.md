@@ -56,7 +56,7 @@ Initial implementation:
 
 - `agent/app_shortcut_presets.py`
 - Universal editing actions such as undo, redo, bold, italic, underline, and find now live in the Global Shortcut Catalog instead of being repeated per application.
-- macOS built-in presets intentionally cover only the current product slice: Microsoft Word, Microsoft Excel, Microsoft PowerPoint, WPS Office, and Feishu/Lark.
+- macOS built-in application shortcut presets are intentionally empty until there is a validated surface-aware adapter for Office, WPS, and Feishu/Lark. Local `typing.application_shortcuts` remains the customization path.
 - macOS application launch actions are discovered from installed `.app` bundles, with built-in aliases for common spoken names such as Feishu/Lark, Word, Excel, PowerPoint/PPT, WPS, and Google Chrome.
 - macOS system window actions are exposed as built-in System Actions and execute through Accessibility frame updates rather than physical key chords.
 - The macOS menu bar UI now includes a `快捷键` tab for catalog visibility, disabling/restoring named actions, and adding custom global shortcut actions.
@@ -65,7 +65,7 @@ Initial implementation:
 - `agent.macos_window_actions` now owns macOS Accessibility window frame actions.
 - `agent.typer` still owns key parsing and key emission while delegating catalog policy, app launch, and window actions to deeper modules.
 - Instruction Mode already receives the current active application and local Shortcut Catalog names, so a Speech Interpretation Provider can choose a named Shortcut Invocation without inventing key sequences.
-- Next work should add Windows app identities and presets for the same narrow slice.
+- Next work should add a validated surface-aware adapter for application-specific Office, WPS, and Feishu/Lark shortcuts, then add Windows app identities and presets for the same narrow slice.
 
 ## 4. Capture Path
 
