@@ -44,6 +44,8 @@ from agent.intent_diagnostics import (
     summarize_diagnostics,
 )
 from agent.intent_loop import run_training_loop
+from agent.intent_evaluation import evaluate_reviewed_samples
+from agent.intent_sync import sync_local_corrected_intents
 from agent.intent_training import _DEFAULT_PATH as _INTENT_SAMPLES_PATH
 
 _USER_DIR = Path.home() / ".voice-keyboard"
@@ -816,27 +818,33 @@ class _IntentDiagnosticsTab(NSObject):
         training_cfg = ((_load_user_config().get("instruction_mode") or {}).get("intent_training") or {})
         server = str(training_cfg.get("server") or os.getenv("INTENT_TRAINING_SERVER", "")).strip()
         token = str(training_cfg.get("token") or os.getenv("INTENT_TRAINING_UPLOAD_TOKEN", "")).strip()
-        if not server:
-            self._alert("缺少训练服务地址", "请在设置页填写意图训练 server，或设置 INTENT_TRAINING_SERVER。")
-            return
-        self._summary_label.setStringValue_("正在同步远端修正并评测...")
+        override_path = Path.home() / ".voice-keyboard" / "intent_overrides.jsonl"
+        self._summary_label.setStringValue_("正在同步修正并评测...")
 
         def worker():
             try:
-                import requests
-                report = run_training_loop(
-                    sample_path=_INTENT_SAMPLES_PATH,
-                    server=server,
-                    token=token,
-                    override_path=Path.home() / ".voice-keyboard" / "intent_overrides.jsonl",
-                    source="mac-ui",
-                    http=requests,
-                )
-                msg = (
-                    f"同步完成 inserted={report['upload'].get('inserted', 0)} "
-                    f"synced={report['sync']['synced']} "
-                    f"accuracy={report['evaluation']['accuracy_label']}"
-                )
+                if server:
+                    import requests
+                    report = run_training_loop(
+                        sample_path=_INTENT_SAMPLES_PATH,
+                        server=server,
+                        token=token,
+                        override_path=override_path,
+                        source="mac-ui",
+                        http=requests,
+                    )
+                    msg = (
+                        f"远端同步完成 inserted={report['upload'].get('inserted', 0)} "
+                        f"synced={report['sync']['synced']} "
+                        f"accuracy={report['evaluation']['accuracy_label']}"
+                    )
+                else:
+                    sync = sync_local_corrected_intents(_INTENT_SAMPLES_PATH, override_path=override_path)
+                    evaluation = evaluate_reviewed_samples(_INTENT_SAMPLES_PATH, override_path=override_path)
+                    msg = (
+                        f"本地同步完成 synced={sync['synced']} skipped={sync['skipped']} "
+                        f"accuracy={evaluation['accuracy_label']}"
+                    )
                 AppHelper.callAfter(self._sync_finished, msg)
             except Exception as e:
                 AppHelper.callAfter(self._alert, "同步评测失败", str(e))
