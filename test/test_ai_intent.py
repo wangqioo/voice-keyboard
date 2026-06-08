@@ -94,6 +94,40 @@ class AIIntentTests(unittest.TestCase):
         result = classify_intent(llm, IntentContext(text="写一封英文邮件"))
 
         self.assertEqual(result, {"type": "write"})
+        llm.chat.assert_not_called()
+
+    def test_write_request_is_classified_locally_without_target(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"chat","reply":"x"}'
+
+        result = classify_intent(llm, IntentContext(text="\u5e2e\u6211\u8d77\u8349\u4e00\u6bb5\u5ba2\u6237\u56de\u590d"))
+
+        self.assertEqual(result, {"type": "write"})
+        llm.chat.assert_not_called()
+
+    def test_write_request_stays_write_with_recent_text_when_clear_new_content(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"edit"}'
+
+        result = classify_intent(llm, IntentContext(
+            text="\u5e2e\u6211\u5199\u4e00\u5c01\u82f1\u6587\u90ae\u4ef6",
+            recent_text="\u521a\u624d\u8f93\u5165\u7684\u6587\u5b57",
+        ))
+
+        self.assertEqual(result, {"type": "write"})
+        llm.chat.assert_not_called()
+
+    def test_selected_delete_instruction_is_classified_locally(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"chat","reply":"x"}'
+
+        result = classify_intent(llm, IntentContext(
+            text="\u5220\u6389\u9009\u4e2d\u7684\u5185\u5bb9",
+            selected="\u8fd9\u6bb5\u8981\u5220\u9664",
+        ))
+
+        self.assertEqual(result, {"type": "delete"})
+        llm.chat.assert_not_called()
 
     def test_whole_delete_instruction_is_classified_locally(self):
         llm = MagicMock()
@@ -359,6 +393,30 @@ class AIIntentTests(unittest.TestCase):
         ))
 
         self.assertEqual(result, {"type": "shortcut", "name": "加粗"})
+        llm.chat.assert_not_called()
+
+    def test_common_save_alias_is_classified_locally(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"chat","reply":"x"}'
+
+        result = classify_intent(llm, IntentContext(
+            text="\u5e2e\u6211\u4fdd\u5b58\u4e00\u4e0b",
+            shortcuts=("\u4fdd\u5b58", "\u64a4\u9500", "\u786e\u8ba4"),
+        ))
+
+        self.assertEqual(result, {"type": "shortcut", "name": "\u4fdd\u5b58"})
+        llm.chat.assert_not_called()
+
+    def test_common_send_alias_is_classified_locally(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"chat","reply":"x"}'
+
+        result = classify_intent(llm, IntentContext(
+            text="\u53d1\u51fa\u53bb",
+            shortcuts=("\u53d1\u9001", "\u64a4\u9500", "\u786e\u8ba4"),
+        ))
+
+        self.assertEqual(result, {"type": "shortcut", "name": "\u53d1\u9001"})
         llm.chat.assert_not_called()
 
     def test_plain_left_side_utterance_matches_window_shortcut_catalog(self):

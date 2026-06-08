@@ -153,12 +153,22 @@ def classify_local_intent(
     if looks_like_whole_delete_instruction(ctx.text):
         return {"type": "delete"}
 
+    if ctx.selected and looks_like_selected_delete_instruction(ctx.text):
+        return {"type": "delete"}
+
+    if looks_like_write_instruction(ctx.text):
+        return {"type": "write"}
+
     if (
         fallbacks.selected_edit_override
         and (ctx.selected or ctx.recent_text)
         and looks_like_edit_instruction(ctx.text)
     ):
         return {"type": "edit"}
+
+    shortcut_alias = _shortcut_alias_from_text(ctx.text, ctx.shortcuts)
+    if shortcut_alias:
+        return {"type": "shortcut", "name": shortcut_alias}
 
     exact_shortcut = _exact_shortcut_from_text(ctx.text, ctx.shortcuts)
     if exact_shortcut:
@@ -218,6 +228,58 @@ def apply_intent_fallbacks(
 
 def looks_like_edit_instruction(text: str) -> bool:
     return any(hint in text for hint in _EDIT_HINTS)
+
+
+def looks_like_write_instruction(text: str) -> bool:
+    compact = _compact_shortcut_text(text)
+    if not compact:
+        return False
+    write_markers = (
+        "\u5199\u4e00",
+        "\u5199\u4e2a",
+        "\u5199\u5c01",
+        "\u5199\u4e00\u5c01",
+        "\u5199\u4e00\u6bb5",
+        "\u5199\u6bb5",
+        "\u5e2e\u6211\u5199",
+        "\u5e2e\u6211\u8d77\u8349",
+        "\u8d77\u8349",
+        "\u8349\u62df",
+        "\u62df\u4e00\u5c01",
+        "\u751f\u6210",
+        "\u5e2e\u6211\u751f\u6210",
+        "\u5199\u4e2a\u56de\u590d",
+        "\u5e2e\u6211\u56de\u590d",
+        "\u56de\u590d\u4e00\u4e0b",
+    )
+    if not any(marker in compact for marker in write_markers):
+        return False
+    edit_targets = (
+        "\u8fd9\u6bb5",
+        "\u8fd9\u53e5\u8bdd",
+        "\u4e0a\u4e00\u53e5",
+        "\u4e0a\u53e5\u8bdd",
+        "\u4e0a\u9762\u8fd9\u6bb5",
+        "\u9009\u4e2d",
+        "\u5df2\u6709",
+        "\u539f\u6587",
+    )
+    if compact.startswith("\u628a") and any(target in compact for target in edit_targets):
+        return False
+    return True
+
+
+def looks_like_selected_delete_instruction(text: str) -> bool:
+    compact = _compact_shortcut_text(text)
+    if not compact:
+        return False
+    if compact in {"\u5220\u9664", "\u5220\u6389", "\u5220\u4e86", "\u6e05\u9664", "\u6e05\u7a7a"}:
+        return True
+    delete_markers = ("\u5220\u9664", "\u5220\u6389", "\u5220\u4e86", "\u6e05\u9664", "\u6e05\u7a7a")
+    selection_markers = ("\u9009\u4e2d", "\u9009\u62e9", "\u8fd9\u6bb5", "\u8fd9\u53e5\u8bdd", "\u5f53\u524d\u8fd9\u6bb5", "\u5f53\u524d\u6587\u5b57")
+    return any(marker in compact for marker in delete_markers) and any(
+        marker in compact for marker in selection_markers
+    )
 
 
 def looks_like_whole_delete_instruction(text: str) -> bool:
@@ -312,6 +374,40 @@ def _exact_shortcut_from_text(text: str, shortcuts: tuple[str, ...]) -> str:
         return ""
     for shortcut in shortcuts:
         if _compact_shortcut_text(shortcut).lower() == compact:
+            return shortcut
+    return ""
+
+
+
+
+def _shortcut_alias_from_text(text: str, shortcuts: tuple[str, ...]) -> str:
+    compact = _compact_shortcut_text(text).lower()
+    if not compact:
+        return ""
+    alias_groups = (
+        ("\u4fdd\u5b58", ("\u4fdd\u5b58", "\u4fdd\u5b58\u4e00\u4e0b", "\u5e2e\u6211\u4fdd\u5b58", "\u4fdd\u5b58\u5f53\u524d", "\u5b58\u4e00\u4e0b")),
+        ("\u53d1\u9001", ("\u53d1\u9001", "\u53d1\u9001\u4e00\u4e0b", "\u53d1\u51fa\u53bb", "\u5e2e\u6211\u53d1\u9001", "\u53d1\u4e00\u4e0b", "\u63d0\u4ea4\u53d1\u9001")),
+        ("\u5168\u9009", ("\u5168\u9009", "\u5168\u90e8\u9009\u4e2d", "\u9009\u4e2d\u5168\u90e8", "\u5168\u90fd\u9009\u4e2d")),
+        ("\u590d\u5236", ("\u590d\u5236", "\u590d\u5236\u4e00\u4e0b", "\u5e2e\u6211\u590d\u5236")),
+        ("\u7c98\u8d34", ("\u7c98\u8d34", "\u8d34\u4e0a", "\u8d34\u4e00\u4e0b", "\u5e2e\u6211\u7c98\u8d34")),
+        ("\u56de\u8f66", ("\u56de\u8f66", "\u6309\u56de\u8f66", "\u6572\u56de\u8f66", "\u786e\u8ba4\u4e00\u4e0b")),
+        ("\u786e\u8ba4", ("\u786e\u8ba4", "\u786e\u8ba4\u4e00\u4e0b", "\u786e\u5b9a", "\u786e\u5b9a\u4e00\u4e0b")),
+        ("\u63d0\u4ea4", ("\u63d0\u4ea4", "\u63d0\u4ea4\u4e00\u4e0b", "\u5e2e\u6211\u63d0\u4ea4")),
+        ("\u5173\u95ed", ("\u5173\u95ed", "\u5173\u95ed\u4e00\u4e0b", "\u5173\u6389", "\u5173\u4e00\u4e0b")),
+    )
+    normalized_shortcuts = {
+        _compact_shortcut_text(shortcut).lower(): shortcut for shortcut in shortcuts
+    }
+    command_prefixes = ("\u5e2e\u6211", "\u8bf7", "\u9ebb\u70e6", "\u7ed9\u6211")
+    for canonical, aliases in alias_groups:
+        normalized_aliases = tuple(alias.lower() for alias in aliases)
+        if compact not in normalized_aliases and not (
+            compact.startswith(command_prefixes)
+            and any(alias in compact for alias in normalized_aliases)
+        ):
+            continue
+        shortcut = normalized_shortcuts.get(_compact_shortcut_text(canonical).lower())
+        if shortcut:
             return shortcut
     return ""
 
