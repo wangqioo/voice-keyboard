@@ -46,6 +46,10 @@ class TrainingServerStoreTests(unittest.TestCase):
             self.assertEqual(stats["total"], 2)
             self.assertEqual(stats["by_intent"]["shortcut"], 1)
             self.assertEqual(stats["by_source"]["llm"], 1)
+            corrections = store.list_corrected_samples()
+            self.assertEqual(len(corrections), 1)
+            self.assertEqual(corrections[0]["text"], "save")
+            self.assertEqual(corrections[0]["corrected_intent"], {"type": "chat", "reply": "我先不执行"})
 
     def test_parse_jsonl_rejects_non_object_rows(self):
         with self.assertRaises(ValueError):

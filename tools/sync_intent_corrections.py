@@ -40,8 +40,8 @@ def main() -> None:
     if args.token:
         headers["Authorization"] = f"Bearer {args.token}"
     response = requests.get(
-        args.server.rstrip("/") + "/v1/intent-samples",
-        params={"limit": args.limit, "review_label": "wrong_intent"},
+        args.server.rstrip("/") + "/v1/intent-samples/corrections",
+        params={"limit": args.limit},
         headers=headers,
         timeout=30,
     )

@@ -69,6 +69,14 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
         ))
         return {"items": rows}
 
+    @app.get("/v1/intent-samples/corrections")
+    def list_corrections(
+        limit: int = Query(default=1000, ge=1, le=1000),
+        offset: int = Query(default=0, ge=0),
+        _auth: None = Depends(require_token),
+    ) -> dict:
+        return {"items": store.list_corrected_samples(limit=limit, offset=offset)}
+
     @app.post("/v1/intent-samples/{sample_id}/review")
     def review_sample(
         sample_id: int,

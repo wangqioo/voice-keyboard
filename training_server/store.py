@@ -112,6 +112,21 @@ class IntentTrainingStore:
         with self._managed_connection() as conn:
             return [_row_to_dict(row) for row in conn.execute(sql, params).fetchall()]
 
+    def list_corrected_samples(self, *, limit: int = 1000, offset: int = 0) -> list[dict]:
+        with self._managed_connection() as conn:
+            rows = conn.execute(
+                """
+                select * from samples
+                where text != ''
+                  and corrected_intent_json != '{}'
+                  and corrected_intent_json != ''
+                order by id desc
+                limit ? offset ?
+                """,
+                (max(1, min(limit, 1000)), max(0, offset)),
+            ).fetchall()
+            return [_row_to_dict(row) for row in rows]
+
     def review_sample(
         self,
         sample_id: int,
