@@ -19,10 +19,10 @@ from agent.memo_store import MemoStore
 _USER_DIR = Path.home() / ".voice-keyboard"
 _CONFIG = _USER_DIR / "config.yaml"
 _HOTKEY_OPTIONS = [
-    ("shift_r", "Right Shift", "右 Shift"),
-    ("alt_r", "Right Alt", "右 Alt"),
+    ("shift_r", "Right Shift", "\u53f3 Shift"),
+    ("alt_r", "Right Alt", "\u53f3 Alt"),
     ("alt_gr", "AltGr", "AltGr"),
-    ("ctrl_r", "Right Ctrl", "右 Ctrl"),
+    ("ctrl_r", "Right Ctrl", "\u53f3 Ctrl"),
     ("f8", "F8", "F8"),
     ("f9", "F9", "F9"),
     ("f10", "F10", "F10"),
@@ -52,14 +52,7 @@ def _language() -> str:
 
 
 class WindowsMainWindow:
-    def __init__(
-        self,
-        *,
-        history: History,
-        insert_text,
-        reload_config,
-        notify,
-    ):
+    def __init__(self, *, history: History, insert_text, reload_config, notify):
         self._history = history
         self._memo = MemoStore()
         self._insert_text = insert_text
@@ -88,7 +81,6 @@ class WindowsMainWindow:
         self._root.geometry("920x620")
         self._root.minsize(820, 520)
         self._root.protocol("WM_DELETE_WINDOW", self._hide)
-
         self._build()
         self._poll_queue()
         self._root.mainloop()
@@ -132,7 +124,6 @@ class WindowsMainWindow:
         outer.pack(fill="both", expand=True)
         self._tabs = ttk.Notebook(outer)
         self._tabs.pack(fill="both", expand=True)
-
         self._build_overview_tab()
         self._build_history_tab()
         self._build_memo_tab()
@@ -147,22 +138,26 @@ class WindowsMainWindow:
         return frame
 
     def _build_overview_tab(self) -> None:
-        tab = self._tab("概览", "Overview")
+        tab = self._tab("\u6982\u89c8", "Overview")
         self._overview = tk.Text(tab, height=18, wrap="word")
         self._overview.pack(fill="both", expand=True)
-        ttk.Button(tab, text=self._t("刷新", "Refresh"), command=self.refresh_all).pack(anchor="e", pady=(8, 0))
+        buttons = ttk.Frame(tab)
+        buttons.pack(fill="x", pady=(8, 0))
+        ttk.Button(buttons, text=self._t("\u6253\u5f00\u914d\u7f6e", "Open Config"), command=self._open_config_file).pack(side="left")
+        ttk.Button(buttons, text=self._t("\u6253\u5f00\u914d\u7f6e\u76ee\u5f55", "Open Config Folder"), command=self._open_config_dir).pack(side="left", padx=4)
+        ttk.Button(buttons, text=self._t("\u5237\u65b0", "Refresh"), command=self.refresh_all).pack(side="right")
 
     def _build_history_tab(self) -> None:
-        tab = self._tab("历史记录", "History")
+        tab = self._tab("\u5386\u53f2\u8bb0\u5f55", "History")
         toolbar = ttk.Frame(tab)
         toolbar.pack(fill="x")
         self._history_search = tk.StringVar()
-        ttk.Label(toolbar, text=self._t("搜索", "Search")).pack(side="left")
+        ttk.Label(toolbar, text=self._t("\u641c\u7d22", "Search")).pack(side="left")
         ttk.Entry(toolbar, textvariable=self._history_search, width=28).pack(side="left", padx=6)
-        ttk.Button(toolbar, text=self._t("刷新", "Refresh"), command=self._refresh_history).pack(side="left")
-        ttk.Button(toolbar, text=self._t("复制", "Copy"), command=self._copy_history).pack(side="left", padx=4)
-        ttk.Button(toolbar, text=self._t("再次输入", "Insert Again"), command=self._insert_history).pack(side="left")
-        ttk.Button(toolbar, text=self._t("打开文件", "Open File"), command=self._open_history_file).pack(side="right")
+        ttk.Button(toolbar, text=self._t("\u5237\u65b0", "Refresh"), command=self._refresh_history).pack(side="left")
+        ttk.Button(toolbar, text=self._t("\u590d\u5236", "Copy"), command=self._copy_history).pack(side="left", padx=4)
+        ttk.Button(toolbar, text=self._t("\u518d\u6b21\u8f93\u5165", "Insert Again"), command=self._insert_history).pack(side="left")
+        ttk.Button(toolbar, text=self._t("\u6253\u5f00\u6587\u4ef6", "Open File"), command=self._open_history_file).pack(side="right")
 
         cols = ("time", "mode", "status", "text")
         self._history_tree = ttk.Treeview(tab, columns=cols, show="headings", height=18)
@@ -173,43 +168,42 @@ class WindowsMainWindow:
         self._history_tree.bind("<Double-1>", lambda _event: self._insert_history())
 
     def _build_memo_tab(self) -> None:
-        tab = self._tab("记忆库", "Memo Library")
+        tab = self._tab("\u8bb0\u5fc6\u5e93", "Memo Library")
         body = ttk.PanedWindow(tab, orient="horizontal")
         body.pack(fill="both", expand=True)
-
         left = ttk.Frame(body)
         body.add(left, weight=1)
-        ttk.Button(left, text=self._t("刷新", "Refresh"), command=self._refresh_memo).pack(fill="x")
+        ttk.Button(left, text=self._t("\u5237\u65b0", "Refresh"), command=self._refresh_memo).pack(fill="x")
         self._memo_list = tk.Listbox(left, height=20)
         self._memo_list.pack(fill="both", expand=True, pady=(8, 0))
         self._memo_list.bind("<<ListboxSelect>>", lambda _event: self._load_selected_memo())
 
         right = ttk.Frame(body)
         body.add(right, weight=3)
-        ttk.Label(right, text=self._t("名称", "Name")).pack(anchor="w")
+        ttk.Label(right, text=self._t("\u540d\u79f0", "Name")).pack(anchor="w")
         self._memo_key = tk.StringVar()
         ttk.Entry(right, textvariable=self._memo_key).pack(fill="x", pady=(0, 8))
-        ttk.Label(right, text=self._t("内容", "Value")).pack(anchor="w")
+        ttk.Label(right, text=self._t("\u5185\u5bb9", "Value")).pack(anchor="w")
         self._memo_text = tk.Text(right, height=18, wrap="word")
         self._memo_text.pack(fill="both", expand=True)
         buttons = ttk.Frame(right)
         buttons.pack(fill="x", pady=(8, 0))
-        ttk.Button(buttons, text=self._t("新建", "New"), command=self._new_memo).pack(side="left")
-        ttk.Button(buttons, text=self._t("保存", "Save"), command=self._save_memo).pack(side="left", padx=4)
-        ttk.Button(buttons, text=self._t("删除", "Delete"), command=self._delete_memo).pack(side="left")
-        ttk.Button(buttons, text=self._t("复制", "Copy"), command=self._copy_memo).pack(side="left", padx=4)
-        ttk.Button(buttons, text=self._t("插入", "Insert"), command=self._insert_memo).pack(side="left")
-        ttk.Button(buttons, text=self._t("打开文件", "Open File"), command=self._open_memo_file).pack(side="right")
+        ttk.Button(buttons, text=self._t("\u65b0\u5efa", "New"), command=self._new_memo).pack(side="left")
+        ttk.Button(buttons, text=self._t("\u4fdd\u5b58", "Save"), command=self._save_memo).pack(side="left", padx=4)
+        ttk.Button(buttons, text=self._t("\u5220\u9664", "Delete"), command=self._delete_memo).pack(side="left")
+        ttk.Button(buttons, text=self._t("\u590d\u5236", "Copy"), command=self._copy_memo).pack(side="left", padx=4)
+        ttk.Button(buttons, text=self._t("\u63d2\u5165", "Insert"), command=self._insert_memo).pack(side="left")
+        ttk.Button(buttons, text=self._t("\u6253\u5f00\u6587\u4ef6", "Open File"), command=self._open_memo_file).pack(side="right")
 
     def _build_hotkeys_tab(self) -> None:
-        tab = self._tab("快捷键", "Hotkeys")
+        tab = self._tab("\u5feb\u6377\u952e", "Hotkeys")
         form = ttk.Frame(tab)
         form.pack(anchor="nw")
         self._vars["ptt_key"] = tk.StringVar()
         self._vars["ai_key"] = tk.StringVar()
-        self._combo_row(form, 0, self._t("语音转文字快捷键", "Dictation hotkey"), "ptt_key")
-        self._combo_row(form, 1, self._t("AI 功能快捷键", "AI hotkey"), "ai_key")
-        ttk.Button(form, text=self._t("保存并重载", "Save and Reload"), command=self._save_hotkeys).grid(row=2, column=1, sticky="w", pady=14)
+        self._combo_row(form, 0, self._t("\u8bed\u97f3\u8f6c\u6587\u5b57\u5feb\u6377\u952e", "Dictation hotkey"), "ptt_key")
+        self._combo_row(form, 1, self._t("AI \u529f\u80fd\u5feb\u6377\u952e", "AI hotkey"), "ai_key")
+        ttk.Button(form, text=self._t("\u4fdd\u5b58\u5e76\u91cd\u8f7d", "Save and Reload"), command=self._save_hotkeys).grid(row=2, column=1, sticky="w", pady=14)
 
     def _combo_row(self, parent, row: int, label: str, key: str) -> None:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 12), pady=6)
@@ -218,30 +212,30 @@ class WindowsMainWindow:
         box.grid(row=row, column=1, sticky="w", pady=6)
 
     def _build_config_tab(self) -> None:
-        tab = self._tab("配置", "Config")
+        tab = self._tab("\u914d\u7f6e", "Config")
         form = ttk.Frame(tab)
         form.pack(anchor="nw", fill="x")
         fields = [
-            ("ui.language", self._t("语言", "Language")),
+            ("ui.language", self._t("\u8bed\u8a00", "Language")),
             ("stt.provider", "STT provider"),
             ("stt.model", "STT model"),
             ("llm.provider", "LLM provider"),
             ("llm.model", "LLM model"),
-            ("typing.method", self._t("打字方式", "Typing method")),
-            ("audio.device", self._t("麦克风设备", "Microphone")),
+            ("typing.method", self._t("\u6253\u5b57\u65b9\u5f0f", "Typing method")),
+            ("audio.device", self._t("\u9ea6\u514b\u98ce\u8bbe\u5907", "Microphone")),
         ]
         for row, (path, label) in enumerate(fields):
             self._vars[path] = tk.StringVar()
             ttk.Label(form, text=label).grid(row=row, column=0, sticky="w", padx=(0, 12), pady=5)
             ttk.Entry(form, textvariable=self._vars[path], width=42).grid(row=row, column=1, sticky="ew", pady=5)
         form.columnconfigure(1, weight=1)
-        ttk.Button(form, text=self._t("保存并重载", "Save and Reload"), command=self._save_config).grid(row=len(fields), column=1, sticky="w", pady=14)
+        ttk.Button(form, text=self._t("\u4fdd\u5b58\u5e76\u91cd\u8f7d", "Save and Reload"), command=self._save_config).grid(row=len(fields), column=1, sticky="w", pady=14)
 
     def _build_check_tab(self) -> None:
-        tab = self._tab("运行自检", "Self Check")
+        tab = self._tab("\u8fd0\u884c\u81ea\u68c0", "Self Check")
         self._check = tk.Text(tab, height=20, wrap="word")
         self._check.pack(fill="both", expand=True)
-        ttk.Button(tab, text=self._t("重新检查", "Run Check"), command=self._refresh_check).pack(anchor="e", pady=(8, 0))
+        ttk.Button(tab, text=self._t("\u91cd\u65b0\u68c0\u67e5", "Run Check"), command=self._refresh_check).pack(anchor="e", pady=(8, 0))
 
     def refresh_all(self) -> None:
         self._refresh_overview()
@@ -256,7 +250,7 @@ class WindowsMainWindow:
         stt = cfg.get("stt") or {}
         llm = cfg.get("llm") or {}
         rows = [
-            f"Status: running",
+            "Status: running",
             f"Language: {_language()}",
             f"Dictation hotkey: {audio.get('ptt_key', '')}",
             f"AI hotkey: {audio.get('ai_key', '')}",
@@ -294,7 +288,7 @@ class WindowsMainWindow:
     def _insert_history(self) -> None:
         text = self._selected_history_text()
         if text:
-            self._insert_text(text, self._t("已插入历史记录", "History inserted"))
+            self._insert_text(text, self._t("\u5df2\u63d2\u5165\u5386\u53f2\u8bb0\u5f55", "History inserted"))
 
     def _refresh_memo(self) -> None:
         self._memo = MemoStore()
@@ -319,21 +313,21 @@ class WindowsMainWindow:
         key = self._memo_key.get().strip()
         value = self._memo_text.get("1.0", "end").strip()
         if not key:
-            messagebox.showwarning("Voice Keyboard", self._t("请填写名称", "Name is required"))
+            messagebox.showwarning("Voice Keyboard", self._t("\u8bf7\u586b\u5199\u540d\u79f0", "Name is required"))
             return
         self._memo.save(key, value)
         self._refresh_memo()
-        self._notify_text(self._t("已保存记忆", "Memo saved"))
+        self._notify_text(self._t("\u5df2\u4fdd\u5b58\u8bb0\u5fc6", "Memo saved"))
 
     def _delete_memo(self) -> None:
         key = self._memo_key.get().strip()
         if not key:
             return
-        if messagebox.askyesno("Voice Keyboard", self._t("确定删除这条记忆？", "Delete this memo?")):
+        if messagebox.askyesno("Voice Keyboard", self._t("\u786e\u5b9a\u5220\u9664\u8fd9\u6761\u8bb0\u5fc6\uff1f", "Delete this memo?")):
             self._memo.delete(key)
             self._new_memo()
             self._refresh_memo()
-            self._notify_text(self._t("已删除记忆", "Memo deleted"))
+            self._notify_text(self._t("\u5df2\u5220\u9664\u8bb0\u5fc6", "Memo deleted"))
 
     def _copy_memo(self) -> None:
         self._copy_text(self._memo_text.get("1.0", "end").strip())
@@ -341,7 +335,7 @@ class WindowsMainWindow:
     def _insert_memo(self) -> None:
         text = self._memo_text.get("1.0", "end").strip()
         if text:
-            self._insert_text(text, self._t("已插入记忆", "Memo inserted"))
+            self._insert_text(text, self._t("\u5df2\u63d2\u5165\u8bb0\u5fc6", "Memo inserted"))
 
     def _load_config_fields(self) -> None:
         cfg = _read_config()
@@ -362,7 +356,7 @@ class WindowsMainWindow:
         audio["ai_key"] = self._hotkey_value(self._vars["ai_key"].get())
         _write_config(cfg)
         self._reload_config(False)
-        self._notify_text(self._t("快捷键已保存", "Hotkeys saved"))
+        self._notify_text(self._t("\u5feb\u6377\u952e\u5df2\u4fdd\u5b58", "Hotkeys saved"))
 
     def _save_config(self) -> None:
         cfg = _read_config()
@@ -376,7 +370,7 @@ class WindowsMainWindow:
                 cfg[head][key] = value
         _write_config(cfg)
         self._reload_config(False)
-        self._notify_text(self._t("配置已保存", "Config saved"))
+        self._notify_text(self._t("\u914d\u7f6e\u5df2\u4fdd\u5b58", "Config saved"))
 
     def _refresh_check(self) -> None:
         rows = []
@@ -413,12 +407,22 @@ class WindowsMainWindow:
             path.write_text("{}", encoding="utf-8")
         os.startfile(str(path))
 
+    def _open_config_file(self) -> None:
+        _USER_DIR.mkdir(parents=True, exist_ok=True)
+        if not _CONFIG.exists():
+            _CONFIG.write_text("{}", encoding="utf-8")
+        os.startfile(str(_CONFIG))
+
+    def _open_config_dir(self) -> None:
+        _USER_DIR.mkdir(parents=True, exist_ok=True)
+        os.startfile(str(_USER_DIR))
+
     def _copy_text(self, text: str) -> None:
         if not text or self._root is None:
             return
         self._root.clipboard_clear()
         self._root.clipboard_append(text)
-        self._notify_text(self._t("已复制", "Copied"))
+        self._notify_text(self._t("\u5df2\u590d\u5236", "Copied"))
 
     def _notify_text(self, message: str) -> None:
         self._notify(message)

@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import argparse
 import os
-import subprocess
-import sys
 import threading
 import time
 
@@ -19,7 +16,6 @@ from agent.autostart import install as install_autostart
 from agent.autostart import uninstall as uninstall_autostart
 from agent.config import ensure_user_config
 from agent.history import History
-from agent.main import list_devices
 from agent.memo_store import MemoStore
 from agent.runtime_composition import RuntimeOptions, build_runtime_backend
 from agent.status_window_win import StatusWindow
@@ -77,10 +73,6 @@ class WindowsTrayApp:
             pystray.MenuItem(labels["running"], lambda: None, enabled=False),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(labels["open_main_window"], self._open_main_window, default=True),
-            pystray.MenuItem(labels["open_config"], self._open_config),
-            pystray.MenuItem(labels["open_config_dir"], self._open_config_dir),
-            pystray.MenuItem(labels["list_devices"], self._show_devices),
-            pystray.MenuItem(labels["test_status"], self._test_status),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(labels["language"], pystray.Menu(
                 pystray.MenuItem(labels["language_zh"], lambda icon, item: self._set_language("zh"), checked=lambda item: self._language() == "zh", radio=True),
@@ -104,10 +96,6 @@ class WindowsTrayApp:
             return {
                 "running": "Voice Keyboard is running",
                 "open_main_window": "Open Main Window",
-                "open_config": "Open Config",
-                "open_config_dir": "Open Config Folder",
-                "list_devices": "List Microphones",
-                "test_status": "Test Status Window",
                 "language": "Language",
                 "language_zh": "Chinese",
                 "language_en": "English",
@@ -118,8 +106,6 @@ class WindowsTrayApp:
                 "memo": "Memo Library",
                 "empty_history": "No history yet",
                 "empty_memo": "No memos yet",
-                "open_history_file": "Open History File",
-                "open_memo_file": "Open Memo File",
                 "type_history": "History inserted",
                 "type_memo": "Memo inserted",
                 "reload": "Reload Config",
@@ -130,10 +116,6 @@ class WindowsTrayApp:
         return {
             "running": "Voice Keyboard \u6b63\u5728\u8fd0\u884c",
             "open_main_window": "\u6253\u5f00\u4e3b\u7a97\u53e3",
-            "open_config": "\u6253\u5f00\u914d\u7f6e",
-            "open_config_dir": "\u6253\u5f00\u914d\u7f6e\u76ee\u5f55",
-            "list_devices": "\u5217\u51fa\u9ea6\u514b\u98ce\u8bbe\u5907",
-            "test_status": "\u6d4b\u8bd5\u63d0\u793a\u7a97",
             "language": "\u8bed\u8a00 / Language",
             "language_zh": "\u4e2d\u6587",
             "language_en": "English",
@@ -144,8 +126,6 @@ class WindowsTrayApp:
             "memo": "\u8bb0\u5fc6\u5e93",
             "empty_history": "\u6682\u65e0\u5386\u53f2\u8bb0\u5f55",
             "empty_memo": "\u6682\u65e0\u8bb0\u5fc6",
-            "open_history_file": "\u6253\u5f00\u5386\u53f2\u6587\u4ef6",
-            "open_memo_file": "\u6253\u5f00\u8bb0\u5fc6\u5e93\u6587\u4ef6",
             "type_history": "\u5df2\u63d2\u5165\u5386\u53f2\u8bb0\u5f55",
             "type_memo": "\u5df2\u63d2\u5165\u8bb0\u5fc6",
             "reload": "\u91cd\u8f7d\u914d\u7f6e",
@@ -157,9 +137,6 @@ class WindowsTrayApp:
     def _message(self, key: str, **values) -> str:
         en = self._language() == "en"
         messages = {
-            "config_opened": ("Config opened", "\u914d\u7f6e\u5df2\u6253\u5f00"),
-            "config_dir_opened": ("Config folder opened", "\u914d\u7f6e\u76ee\u5f55\u5df2\u6253\u5f00"),
-            "devices_opened": ("Microphone list opened", "\u9ea6\u514b\u98ce\u5217\u8868\u5df2\u6253\u5f00"),
             "language_set": ("Language: {language}", "\u8bed\u8a00\uff1a{language}"),
             "hotkey_set": ("{name}: {value}", "{name}\uff1a{value}"),
             "config_reloaded": ("Config reloaded", "\u914d\u7f6e\u5df2\u91cd\u8f7d"),
@@ -203,8 +180,6 @@ class WindowsTrayApp:
                 checked=lambda item, value=value, current=current: current == value,
                 radio=True,
             ))
-        items.append(pystray.Menu.SEPARATOR)
-        items.append(pystray.MenuItem(labels["open_config"], self._open_config))
         return pystray.Menu(*items)
 
     def _hotkey_action(self, key_name: str, value: str):
@@ -229,8 +204,6 @@ class WindowsTrayApp:
                 ))
         else:
             items.append(pystray.MenuItem(labels["empty_history"], lambda: None, enabled=False))
-        items.append(pystray.Menu.SEPARATOR)
-        items.append(pystray.MenuItem(labels["open_history_file"], self._open_history_file))
         return tuple(items)
 
     def _memo_menu_items(self):
@@ -248,8 +221,6 @@ class WindowsTrayApp:
                 ))
         else:
             items.append(pystray.MenuItem(labels["empty_memo"], lambda: None, enabled=False))
-        items.append(pystray.Menu.SEPARATOR)
-        items.append(pystray.MenuItem(labels["open_memo_file"], self._open_memo_file))
         return tuple(items)
 
     def _insert_text_action(self, text: str, kind: str):
@@ -379,45 +350,6 @@ class WindowsTrayApp:
     def _open_main_window(self, _icon=None, _item=None):
         self._main_window.show()
 
-    def _open_config(self, _icon=None, _item=None):
-        _USER_DIR.mkdir(parents=True, exist_ok=True)
-        if not _CONFIG.exists():
-            ensure_user_config()
-        os.startfile(str(_CONFIG))
-        self._notify("config_opened")
-
-    def _open_config_dir(self, _icon=None, _item=None):
-        _USER_DIR.mkdir(parents=True, exist_ok=True)
-        os.startfile(str(_USER_DIR))
-        self._notify("config_dir_opened")
-
-    def _open_history_file(self, _icon=None, _item=None):
-        self._history.path.parent.mkdir(parents=True, exist_ok=True)
-        self._history.path.touch(exist_ok=True)
-        os.startfile(str(self._history.path))
-
-    def _open_memo_file(self, _icon=None, _item=None):
-        path = _USER_DIR / "memo.json"
-        _USER_DIR.mkdir(parents=True, exist_ok=True)
-        if not path.exists():
-            path.write_text("{}", encoding="utf-8")
-        os.startfile(str(path))
-
-    def _show_devices(self, _icon=None, _item=None):
-        subprocess.Popen(
-            [sys.executable, "-m", "agent.windows_tray", "--list-devices-console"],
-            cwd=str(Path(__file__).resolve().parent.parent),
-            creationflags=subprocess.CREATE_NEW_CONSOLE,
-        )
-        self._notify("devices_opened")
-
-    def _test_status(self, _icon=None, _item=None):
-        def _run():
-            for state in ("recording", "recognizing", "ai_processing", "error_stt", "idle"):
-                self._status.set_state(state)
-                time.sleep(1.0)
-        threading.Thread(target=_run, daemon=True).start()
-
     def _install_autostart(self, _icon=None, _item=None):
         install_autostart()
         self._notify("autostart_enabled")
@@ -438,13 +370,6 @@ class WindowsTrayApp:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--list-devices-console", action="store_true")
-    args = parser.parse_args()
-    if args.list_devices_console:
-        list_devices()
-        input("\n按回车关闭...")
-        return
     WindowsTrayApp().run()
 
 
