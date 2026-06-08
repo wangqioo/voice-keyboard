@@ -8,6 +8,7 @@ import json
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
+from agent.intent_model import load_intent_model
 from agent.intent_overrides import find_override
 from agent.memo import (
     MemoRecord,
@@ -80,6 +81,8 @@ class IntentFallbackOptions:
     llm_cache: bool = True
     intent_overrides: bool = True
     intent_overrides_path: str = ""
+    intent_model: bool = False
+    intent_model_path: str = ""
     local_confidence_threshold: IntentConfidence = "high"
 
     @classmethod
@@ -97,6 +100,8 @@ class IntentFallbackOptions:
             llm_cache=bool(cfg.get("llm_cache", True)),
             intent_overrides=bool(cfg.get("intent_overrides", True)),
             intent_overrides_path=str(cfg.get("intent_overrides_path", "")),
+            intent_model=bool(cfg.get("intent_model", bool(cfg.get("intent_model_path", "")))),
+            intent_model_path=str(cfg.get("intent_model_path", "")),
             local_confidence_threshold=str(cfg.get("local_confidence_threshold", "high")),
         )
 
@@ -228,6 +233,10 @@ def classify_local_intent_match(
     if override:
         return LocalIntentMatch(override, "high", "corrected_override")
 
+    model_match = _model_intent_from_text(ctx, fallbacks)
+    if model_match:
+        return LocalIntentMatch(model_match, "high", "intent_model")
+
     if fallbacks.multi_step_guard and looks_like_multi_step_instruction(ctx.text):
         return LocalIntentMatch({"type": "chat", "reply": _MULTI_STEP_FEEDBACK}, "high", "multi_step")
 
@@ -299,6 +308,21 @@ def _override_is_available(intent: dict, ctx: IntentContext) -> bool:
     if intent_type in {"memo_recall", "memo_delete"}:
         return str(intent.get("key") or "") in ctx.memo_keys
     return True
+
+
+def _model_intent_from_text(
+    ctx: IntentContext,
+    fallbacks: IntentFallbackOptions,
+) -> dict | None:
+    if not fallbacks.intent_model or not fallbacks.intent_model_path:
+        return None
+    model = load_intent_model(fallbacks.intent_model_path)
+    if model is None:
+        return None
+    intent = model.match(ctx.text)
+    if not intent:
+        return None
+    return intent if _override_is_available(intent, ctx) else None
 
 
 def apply_intent_fallbacks(

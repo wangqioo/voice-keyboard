@@ -73,6 +73,31 @@ class AIIntentTests(unittest.TestCase):
             self.assertEqual(result, {"type": "chat", "reply": "没有这个动作"})
             llm.chat.assert_called_once()
 
+    def test_local_intent_model_classifies_before_llm(self):
+        from agent.intent_model import train_intent_model
+
+        with tempfile.TemporaryDirectory() as td:
+            samples = Path(td) / "samples.jsonl"
+            model_path = Path(td) / "intent_model.json"
+            samples.write_text(
+                '{"text": "表格里查一下", "corrected_intent": {"type": "shortcut", "name": "查找"}}\n',
+                encoding="utf-8",
+            )
+            train_intent_model(samples, model_path)
+            llm = MagicMock()
+            llm.chat.return_value = '{"type":"chat","reply":"x"}'
+
+            details = classify_intent_details(
+                llm,
+                IntentContext(text="表格里查一下", shortcuts=("查找",)),
+                IntentFallbackOptions(intent_model=True, intent_model_path=str(model_path)),
+            )
+
+            self.assertEqual(details.result["type"], "shortcut")
+            self.assertEqual(details.result["name"], "查找")
+            self.assertEqual(details.source, "local")
+            llm.chat.assert_not_called()
+
     def test_selected_translation_instruction_overrides_write_by_default(self):
         llm = MagicMock()
         llm.chat.return_value = '{"type":"write"}'

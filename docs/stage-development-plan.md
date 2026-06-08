@@ -88,6 +88,8 @@
 - 新增 `tools/evaluate_intent_samples.py` 离线评测工具。
 - 支持从已纠正样本生成去重固定评测集。
 - 支持输出版本化 JSON 评测报告。
+- 支持训练本地轻量意图模型 JSON。
+- 支持客户端在 LLM 之前使用本地意图模型精确命中。
 - 新增 `tools/sync_intent_corrections.py` 纠错同步工具。
 - 新增 `tools/run_intent_training_loop.py` 一键训练闭环工具。
 - 新增 `docs/intent-training-server.md` 服务端使用说明。
@@ -142,6 +144,15 @@ Mac 主窗口设置页支持配置：
 ```bash
 .venv/bin/python tools/evaluate_intent_samples.py \
   --report-dir tmp/intent-eval-reports \
+  --version baseline
+```
+
+训练本地轻量意图模型：
+
+```bash
+.venv/bin/python tools/train_intent_model.py \
+  --input ~/.voice-keyboard/intent_samples.jsonl \
+  --output ~/.voice-keyboard/intent_model.json \
   --version baseline
 ```
 
@@ -223,13 +234,13 @@ http://SERVER:8000/review
 5. 本地同步成覆盖规则。
 6. 本地离线回放评测。
 
-未来模型训练闭环仍然是：
+未来模型增强闭环仍然是：
 
 1. 积累足够多真实纠正样本。
 2. 持续维护固定评测集和版本化评测报告。
-3. 训练轻量本地分类器或小模型。
+3. 训练能泛化相似表达的本地分类器或小模型。
 4. 输出模型版本和评估报告。
-5. 客户端接入模型。
+5. 客户端逐步接入更高置信度模型。
 6. 高置信度本地执行，低置信度交给 LLM。
 7. 用户继续纠错，样本继续回流。
 
@@ -266,9 +277,9 @@ http://SERVER:8000/review
 - 记录模型版本。
 - 保留回滚路径。
 
-### P3：训练本地意图模型
+### P3：增强本地意图模型
 
-第一版训练目标不建议追求复杂大模型，建议先做轻量分类：
+当前第一版本地意图模型已经可以从 `corrected_intent` 样本生成 JSON 模型，并在 LLM 之前做精确文本命中。下一步目标是从精确命中增强到可控泛化：
 
 - 输入：用户语音识别后的文本、当前应用、是否有选中文本、历史上下文摘要。
 - 输出：意图类型、目标对象、动作参数、置信度。
@@ -286,9 +297,9 @@ http://SERVER:8000/review
 - 记忆库保存。
 - 和 AI 聊天。
 
-### P4：把训练结果接回客户端
+### P4：完善模型版本和回滚
 
-客户端接入方式建议是分层判断：
+客户端当前接入方式已经是分层判断：
 
 1. 本地硬规则命中，直接执行。
 2. 本地覆盖规则命中，直接执行或按风险策略确认。
@@ -296,6 +307,8 @@ http://SERVER:8000/review
 4. 本地训练模型低置信度，进入 LLM。
 5. 高风险操作需要确认。
 6. 失败或用户纠正时继续记录样本。
+
+下一步需要补齐模型版本、评测报告关联和回滚入口。
 
 ### P5：Windows 同步实现 Mac 新能力
 

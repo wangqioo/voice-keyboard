@@ -159,3 +159,33 @@ Write a versioned JSON report:
 The report contains total/correct/wrong counts, accuracy, and mismatches. Keep
 reports when changing rules, overrides, or future local models so regressions
 are visible instead of guessed.
+
+## Local Intent Model
+
+The first local model is intentionally lightweight: it maps normalized corrected
+instruction text to a corrected intent. It is conservative and only does exact
+normalized-text matches, so it can be enabled before a broader classifier exists.
+
+Train it from corrected samples:
+
+```bash
+.venv/bin/python tools/train_intent_model.py \
+  --input ~/.voice-keyboard/intent_samples.jsonl \
+  --output ~/.voice-keyboard/intent_model.json \
+  --version baseline
+```
+
+Enable it in `config.yaml`:
+
+```yaml
+instruction_mode:
+  intent_fallbacks:
+    intent_model: true
+    intent_model_path: ~/.voice-keyboard/intent_model.json
+```
+
+Runtime order is:
+
+1. Local hard rules and corrected overrides.
+2. Local intent model exact match.
+3. LLM classifier.
