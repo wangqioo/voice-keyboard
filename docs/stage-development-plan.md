@@ -81,6 +81,7 @@
 - 支持 `/v1/intent-samples/corrections` 拉取已纠正样本。
 - 统计接口支持 `corrected_total` 和 `by_corrected_type`。
 - 支持 token 鉴权。
+- 支持内置 `/review` 网页标注后台。
 - 新增 `tools/upload_intent_samples.py` 上传工具。
 - 新增 `tools/evaluate_intent_samples.py` 离线评测工具。
 - 新增 `tools/sync_intent_corrections.py` 纠错同步工具。
@@ -171,6 +172,14 @@ uvicorn training_server.api:app --host 0.0.0.0 --port 8000
 .venv/bin/python tools/upload_intent_samples.py --dry-run
 ```
 
+打开网页标注后台：
+
+```text
+http://SERVER:8000/review
+```
+
+使用 `INTENT_TRAINING_UPLOAD_TOKEN` 作为页面 Token。后台支持查看统计、筛选样本、保存复核标签、备注和 `corrected_intent`。
+
 ## 数据训练闭环
 
 当前已经完成的即时闭环是：
@@ -216,21 +225,16 @@ uvicorn training_server.api:app --host 0.0.0.0 --port 8000
 - 验证 Mac 权限、热键、HUD、AI 指令执行在长时间使用下稳定。
 - 控制覆盖规则规模，必要时增加按时间、按命中次数的清理策略。
 
-### P1：补齐网页标注后台
+### P1：增强网页标注后台
 
-当前服务端已有 API，但还没有专门的网页标注后台。下一步建议做一个简单页面：
+当前已经有内置 `/review` 基础网页标注后台。下一步建议继续增强：
 
-- 查看最近上传样本。
-- 按意图类型筛选。
-- 按是否已标注筛选。
-- 标注“正确”。
-- 标注“意图错误”。
-- 标注“目标错误”。
-- 标注“应该二次确认”。
-- 标注“缺少快捷键”。
-- 填写正确意图。
-- 填写备注。
-- 查看统计数据。
+- 更适合批量操作的键盘快捷键。
+- 批量标注同类重复样本。
+- 按高频短语聚合标注。
+- 展示最近一次同步状态。
+- 展示纠正样本是否已被本地覆盖规则吸收。
+- 增加导出评测集入口。
 - 查看纠正样本同步状态。
 
 这个后台会直接决定后续训练数据质量，但在 Mac 本地-only 闭环已经可用之后，它不是阻塞项。
@@ -326,7 +330,7 @@ uvicorn training_server.api:app --host 0.0.0.0 --port 8000
 1. 在 Mac 上继续真实使用，积累高频错误样本。
 2. 用意图诊断页把错误样本补上 `corrected_intent`。
 3. 持续用“同步评测”观察本地覆盖规则是否提升命中率。
-4. 补网页标注后台，提升多人或远端标注效率。
+4. 增强网页标注后台，提升多人或远端标注效率。
 5. 建立固定评测集和版本化评测报告。
 6. 使用真实样本训练第一版本地意图模型。
 7. 客户端接入本地模型。

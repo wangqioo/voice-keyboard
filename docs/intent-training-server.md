@@ -12,6 +12,8 @@ batches, stores samples, supports review labels, and exposes statistics.
 - JSONL batch ingestion
 - Sample listing
 - Review label update
+- Built-in `/review` web review console
+- Corrected intent review payloads
 - Basic stats
 - Client upload CLI
 
@@ -63,6 +65,32 @@ Dry run:
 python tools/upload_intent_samples.py --dry-run
 ```
 
+## Web Review Console
+
+After the server starts, open:
+
+```text
+http://SERVER:8000/review
+```
+
+The page is built into the FastAPI app and does not require a separate frontend
+build step.
+
+Use the same token as `INTENT_TRAINING_UPLOAD_TOKEN` in the Token field. The
+browser stores it in `localStorage` and sends it as:
+
+```text
+Authorization: Bearer <token>
+```
+
+The review console supports:
+
+- Viewing total and corrected sample counts.
+- Filtering samples by `review_label`, `intent_type`, and `status`.
+- Reviewing recent samples without leaving the page.
+- Saving review labels and notes.
+- Filling `corrected_intent` for shortcut, delete, memory, chat, rewrite, replace, and continue intents.
+
 ## API
 
 Health:
@@ -93,7 +121,11 @@ POST /v1/intent-samples/{id}/review
 Authorization: Bearer <token>
 Content-Type: application/json
 
-{"label":"wrong_intent","note":"Should be shortcut 保存"}
+{
+  "label": "wrong_intent",
+  "note": "Should be shortcut 保存",
+  "corrected_intent": {"type": "shortcut", "name": "保存"}
+}
 ```
 
 Stats:
@@ -120,7 +152,6 @@ For a real multi-device setup:
 - Use HTTPS termination at a reverse proxy.
 - Keep `INTENT_TRAINING_UPLOAD_TOKEN` secret.
 - Use PostgreSQL for production storage.
-- Add a Web review UI for larger review batches.
 - Add scheduled exports for analysis.
 
 Recommended production stack:

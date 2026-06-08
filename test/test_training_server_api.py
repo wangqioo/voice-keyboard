@@ -11,6 +11,23 @@ from training_server.config import ServerConfig
 
 @unittest.skipIf(TestClient is None, "fastapi is not installed")
 class TrainingServerApiTests(unittest.TestCase):
+    def test_review_page_returns_html(self):
+        from training_server.api import create_app
+
+        with tempfile.TemporaryDirectory() as td:
+            app = create_app(ServerConfig(
+                database_url=f"sqlite:///{td}/training.db",
+                upload_token="secret",
+            ))
+            client = TestClient(app)
+
+            response = client.get("/review")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("text/html", response.headers["content-type"])
+            self.assertIn("Voice Keyboard Intent Review", response.text)
+            self.assertIn("/v1/intent-samples", response.text)
+
     def test_upload_list_review_and_stats_api(self):
         from training_server.api import create_app
 

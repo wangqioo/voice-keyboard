@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from training_server.config import ServerConfig, sqlite_path_from_url
+from training_server.review_page import render_review_page
 from training_server.store import IntentTrainingStore, SampleQuery, parse_jsonl
 
 
@@ -35,6 +37,10 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
     @app.get("/health")
     def health() -> dict:
         return {"ok": True}
+
+    @app.get("/review", response_class=HTMLResponse)
+    def review_page() -> HTMLResponse:
+        return HTMLResponse(render_review_page())
 
     @app.post("/v1/intent-samples/batches", response_model=UploadResponse)
     async def upload_batch(
