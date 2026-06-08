@@ -28,6 +28,16 @@ from agent.text_buffer import TextBuffer
 _USER_DIR = Path.home() / ".voice-keyboard"
 _CONFIG = _USER_DIR / "config.yaml"
 _APP_NAME = "Voice Keyboard"
+_HOTKEY_OPTIONS = [
+    ("shift_r", "Right Shift", "\u53f3 Shift"),
+    ("alt_r", "Right Alt", "\u53f3 Alt"),
+    ("alt_gr", "AltGr", "AltGr"),
+    ("ctrl_r", "Right Ctrl", "\u53f3 Ctrl"),
+    ("f8", "F8", "F8"),
+    ("f9", "F9", "F9"),
+    ("f10", "F10", "F10"),
+]
+
 
 
 class WindowsTrayApp:
@@ -67,6 +77,10 @@ class WindowsTrayApp:
                 pystray.MenuItem(labels["language_zh"], lambda icon, item: self._set_language("zh"), checked=lambda item: self._language() == "zh", radio=True),
                 pystray.MenuItem(labels["language_en"], lambda icon, item: self._set_language("en"), checked=lambda item: self._language() == "en", radio=True),
             )),
+            pystray.MenuItem(labels["hotkeys"], pystray.Menu(
+                pystray.MenuItem(labels["dictation_hotkey"], self._hotkey_menu("ptt_key")),
+                pystray.MenuItem(labels["ai_hotkey"], self._hotkey_menu("ai_key")),
+            )),
             pystray.MenuItem(labels["reload"], self._reload_backend),
             pystray.MenuItem(labels["install_autostart"], self._install_autostart),
             pystray.MenuItem(labels["uninstall_autostart"], self._uninstall_autostart),
@@ -85,6 +99,9 @@ class WindowsTrayApp:
                 "language": "Language",
                 "language_zh": "Chinese",
                 "language_en": "English",
+                "hotkeys": "Hotkeys",
+                "dictation_hotkey": "Dictation Hotkey",
+                "ai_hotkey": "AI Hotkey",
                 "reload": "Reload Config",
                 "install_autostart": "Enable Start on Login",
                 "uninstall_autostart": "Disable Start on Login",
@@ -99,11 +116,49 @@ class WindowsTrayApp:
             "language": "\u8bed\u8a00 / Language",
             "language_zh": "\u4e2d\u6587",
             "language_en": "English",
+            "hotkeys": "\u5feb\u6377\u952e",
+            "dictation_hotkey": "\u8bed\u97f3\u8f6c\u6587\u5b57\u5feb\u6377\u952e",
+            "ai_hotkey": "AI \u529f\u80fd\u5feb\u6377\u952e",
             "reload": "\u91cd\u8f7d\u914d\u7f6e",
             "install_autostart": "\u6ce8\u518c\u5f00\u673a\u81ea\u542f",
             "uninstall_autostart": "\u53d6\u6d88\u5f00\u673a\u81ea\u542f",
             "quit": "\u9000\u51fa",
         }
+
+    def _hotkey_menu(self, key_name: str):
+        labels = self._labels()
+        language = self._language()
+        current = self._hotkey_value(key_name)
+        items = []
+        for value, en_label, zh_label in _HOTKEY_OPTIONS:
+            label = en_label if language == "en" else zh_label
+            items.append(pystray.MenuItem(
+                label,
+                lambda icon, item, value=value, key_name=key_name: self._set_hotkey(key_name, value),
+                checked=lambda item, value=value, current=current: current == value,
+                radio=True,
+            ))
+        items.append(pystray.Menu.SEPARATOR)
+        items.append(pystray.MenuItem(labels["open_config"], self._open_config))
+        return pystray.Menu(*items)
+
+    def _hotkey_value(self, key_name: str) -> str:
+        cfg = self._read_config()
+        audio = cfg.get("audio") or {}
+        value = audio.get(key_name)
+        if isinstance(value, list):
+            return str(value[0]) if value else ""
+        return str(value or "")
+
+    def _set_hotkey(self, key_name: str, value: str):
+        cfg = self._read_config()
+        audio = cfg.setdefault("audio", {})
+        audio[key_name] = value
+        self._write_config(cfg)
+        self._reload_backend()
+        if self._icon is not None:
+            self._icon.menu = self._menu()
+            self._icon.update_menu()
 
     def _start_backend(self):
         with self._lock:

@@ -21,6 +21,8 @@ def _launch_command() -> list[str]:
             app_bundle = Path(sys.executable).resolve().parents[2]
             return ["/usr/bin/open", "-W", str(app_bundle)]
         return [sys.executable]
+    if _OS == "Windows":
+        return [sys.executable, "-m", "agent.windows_tray"]
     return [sys.executable, "-m", "agent.main"]
 
 
