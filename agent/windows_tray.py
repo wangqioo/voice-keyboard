@@ -134,13 +134,18 @@ class WindowsTrayApp:
             label = en_label if language == "en" else zh_label
             items.append(pystray.MenuItem(
                 label,
-                lambda icon, item, value=value, key_name=key_name: self._set_hotkey(key_name, value),
+                self._hotkey_action(key_name, value),
                 checked=lambda item, value=value, current=current: current == value,
                 radio=True,
             ))
         items.append(pystray.Menu.SEPARATOR)
         items.append(pystray.MenuItem(labels["open_config"], self._open_config))
         return pystray.Menu(*items)
+
+    def _hotkey_action(self, key_name: str, value: str):
+        def action(_icon=None, _item=None):
+            self._set_hotkey(key_name, value)
+        return action
 
     def _hotkey_value(self, key_name: str) -> str:
         cfg = self._read_config()
