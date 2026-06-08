@@ -93,6 +93,7 @@
 - 支持可配置的高阈值相似表达命中，默认仍为精确命中。
 - 支持离线评测报告接入本地意图模型和相似阈值，便于比较 `baseline` 与模型版本。
 - 支持本地意图模型版本 registry、版本列表、激活指定版本和回滚上一版本。
+- 一键训练闭环支持同步纠错后训练模型版本，并写出对应模型评测报告。
 - 新增 `tools/sync_intent_corrections.py` 纠错同步工具。
 - 新增 `tools/run_intent_training_loop.py` 一键训练闭环工具。
 - 新增 `docs/intent-training-server.md` 服务端使用说明。
@@ -183,6 +184,18 @@ Mac 主窗口设置页支持配置：
 
 ```bash
 .venv/bin/python tools/run_intent_training_loop.py --server http://SERVER:8000 --token change-me
+```
+
+执行完整闭环并训练/评测一个本地模型版本：
+
+```bash
+.venv/bin/python tools/run_intent_training_loop.py \
+  --server http://SERVER:8000 \
+  --token change-me \
+  --model-registry-dir ~/.voice-keyboard/intent_models \
+  --model-version model-0.8 \
+  --model-report-dir ~/.voice-keyboard/intent_eval_reports \
+  --model-min-similarity 0.8
 ```
 
 ### 训练服务

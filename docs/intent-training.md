@@ -163,7 +163,7 @@ Compare a local intent model against the same fixed dataset:
   --input tmp/intent-eval-dataset.jsonl \
   --report-dir tmp/intent-eval-reports \
   --version model-0.8 \
-  --intent-model ~/.voice-keyboard/intent_model.json \
+  --intent-model ~/.voice-keyboard/intent_models/current.json \
   --intent-model-min-similarity 0.8
 ```
 
@@ -187,6 +187,19 @@ Train it from corrected samples:
   --input ~/.voice-keyboard/intent_samples.jsonl \
   --output ~/.voice-keyboard/intent_model.json \
   --version baseline
+```
+
+Run upload, correction sync, local evaluation, model training, and model
+evaluation in one command:
+
+```bash
+.venv/bin/python tools/run_intent_training_loop.py \
+  --server http://SERVER:8000 \
+  --token change-me \
+  --model-registry-dir ~/.voice-keyboard/intent_models \
+  --model-version model-0.8 \
+  --model-report-dir ~/.voice-keyboard/intent_eval_reports \
+  --model-min-similarity 0.8
 ```
 
 Or train into a versioned registry and activate that version as `current.json`:
