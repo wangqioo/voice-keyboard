@@ -32,6 +32,13 @@ def main() -> None:
     parser.add_argument("--dataset-limit", type=int, default=0, help="max dataset rows when writing a dataset")
     parser.add_argument("--report-dir", default="", help="write a versioned JSON evaluation report")
     parser.add_argument("--version", default="", help="report filename version, defaults to timestamp")
+    parser.add_argument("--intent-model", default="", help="local intent model JSON to include in evaluation")
+    parser.add_argument(
+        "--intent-model-min-similarity",
+        type=float,
+        default=1.0,
+        help="local intent model similarity threshold; 1.0 means exact-only",
+    )
     args = parser.parse_args()
 
     if args.dataset_output:
@@ -51,6 +58,8 @@ def main() -> None:
             args.input,
             args.report_dir,
             override_path=args.overrides,
+            intent_model_path=args.intent_model or None,
+            intent_model_min_similarity=args.intent_model_min_similarity,
             version=args.version or None,
         )
         if args.json:
@@ -63,7 +72,12 @@ def main() -> None:
             )
         return
 
-    report = evaluate_reviewed_samples(args.input, override_path=args.overrides)
+    report = evaluate_reviewed_samples(
+        args.input,
+        override_path=args.overrides,
+        intent_model_path=args.intent_model or None,
+        intent_model_min_similarity=args.intent_model_min_similarity,
+    )
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return

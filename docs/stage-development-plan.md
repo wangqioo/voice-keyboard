@@ -91,6 +91,7 @@
 - 支持训练本地轻量意图模型 JSON。
 - 支持客户端在 LLM 之前使用本地意图模型精确命中。
 - 支持可配置的高阈值相似表达命中，默认仍为精确命中。
+- 支持离线评测报告接入本地意图模型和相似阈值，便于比较 `baseline` 与模型版本。
 - 新增 `tools/sync_intent_corrections.py` 纠错同步工具。
 - 新增 `tools/run_intent_training_loop.py` 一键训练闭环工具。
 - 新增 `docs/intent-training-server.md` 服务端使用说明。

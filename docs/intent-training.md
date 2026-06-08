@@ -156,9 +156,21 @@ Write a versioned JSON report:
   --version baseline
 ```
 
+Compare a local intent model against the same fixed dataset:
+
+```bash
+.venv/bin/python tools/evaluate_intent_samples.py \
+  --input tmp/intent-eval-dataset.jsonl \
+  --report-dir tmp/intent-eval-reports \
+  --version model-0.8 \
+  --intent-model ~/.voice-keyboard/intent_model.json \
+  --intent-model-min-similarity 0.8
+```
+
 The report contains total/correct/wrong counts, accuracy, and mismatches. Keep
 reports when changing rules, overrides, or future local models so regressions
-are visible instead of guessed.
+are visible instead of guessed. Model reports include the model path and
+similarity threshold used for the run.
 
 ## Local Intent Model
 

@@ -20,13 +20,20 @@ def evaluate_reviewed_samples(
     source: Path | str,
     *,
     override_path: Path | str | None = None,
+    intent_model_path: Path | str | None = None,
+    intent_model_min_similarity: float = 1.0,
 ) -> dict:
     cases = list(_evaluation_cases(_load_jsonl(Path(source).expanduser())))
     correct = 0
     mismatches = []
     for case in cases:
         expected = normalize_intent(case["expected"])
-        actual = _classify_case(case, override_path=override_path)
+        actual = _classify_case(
+            case,
+            override_path=override_path,
+            intent_model_path=intent_model_path,
+            intent_model_min_similarity=intent_model_min_similarity,
+        )
         if _intent_matches(actual, expected):
             correct += 1
         else:
@@ -84,13 +91,22 @@ def write_evaluation_report(
     report_dir: Path | str,
     *,
     override_path: Path | str | None = None,
+    intent_model_path: Path | str | None = None,
+    intent_model_min_similarity: float = 1.0,
     version: str | None = None,
 ) -> dict:
-    report = evaluate_reviewed_samples(source, override_path=override_path)
+    report = evaluate_reviewed_samples(
+        source,
+        override_path=override_path,
+        intent_model_path=intent_model_path,
+        intent_model_min_similarity=intent_model_min_similarity,
+    )
     report = {
         **report,
         "source": str(Path(source).expanduser()),
         "override_path": str(Path(override_path).expanduser()) if override_path is not None else "",
+        "intent_model_path": str(Path(intent_model_path).expanduser()) if intent_model_path is not None else "",
+        "intent_model_min_similarity": float(intent_model_min_similarity),
         "created_at": time.time(),
     }
     clean_version = _safe_version(version or time.strftime("%Y%m%d-%H%M%S"))
@@ -104,7 +120,13 @@ def write_evaluation_report(
     }
 
 
-def _classify_case(case: dict, *, override_path: Path | str | None) -> dict:
+def _classify_case(
+    case: dict,
+    *,
+    override_path: Path | str | None,
+    intent_model_path: Path | str | None,
+    intent_model_min_similarity: float,
+) -> dict:
     expected = normalize_intent(case.get("expected") or case.get("corrected_intent") or {})
     shortcuts = tuple(case.get("shortcut_names") or ())
     if expected.get("type") == "shortcut" and expected.get("name") and expected["name"] not in shortcuts:
@@ -112,6 +134,10 @@ def _classify_case(case: dict, *, override_path: Path | str | None) -> dict:
     fallback_kwargs = {"llm_cache": False}
     if override_path is not None:
         fallback_kwargs["intent_overrides_path"] = str(override_path)
+    if intent_model_path is not None:
+        fallback_kwargs["intent_model"] = True
+        fallback_kwargs["intent_model_path"] = str(intent_model_path)
+        fallback_kwargs["intent_model_min_similarity"] = float(intent_model_min_similarity)
     return classify_intent(
         _FallbackLLM(),
         IntentContext(

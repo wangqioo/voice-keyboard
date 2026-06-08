@@ -92,6 +92,42 @@ class IntentEvaluationTests(unittest.TestCase):
             self.assertTrue(Path(result["path"]).exists())
             self.assertEqual(Path(result["path"]).name, "unit.json")
 
+    def test_evaluation_can_use_local_intent_model_similarity(self):
+        from agent.intent_evaluation import evaluate_reviewed_samples, write_evaluation_report
+        from agent.intent_model import train_intent_model
+
+        with tempfile.TemporaryDirectory() as td:
+            samples = Path(td) / "samples.jsonl"
+            model_samples = Path(td) / "model_samples.jsonl"
+            model_path = Path(td) / "intent_model.json"
+            reports = Path(td) / "reports"
+            samples.write_text(
+                '{"text": "帮我查找一下", "corrected_intent": {"type": "shortcut", "name": "查找"}}\n',
+                encoding="utf-8",
+            )
+            model_samples.write_text(
+                '{"text": "查找一下", "corrected_intent": {"type": "shortcut", "name": "查找"}}\n',
+                encoding="utf-8",
+            )
+            train_intent_model(model_samples, model_path)
+
+            report = evaluate_reviewed_samples(
+                samples,
+                intent_model_path=model_path,
+                intent_model_min_similarity=0.8,
+            )
+            result = write_evaluation_report(
+                samples,
+                reports,
+                version="model",
+                intent_model_path=model_path,
+                intent_model_min_similarity=0.8,
+            )
+
+            self.assertEqual(report["accuracy_label"], "100.0%")
+            self.assertEqual(result["report"]["intent_model_path"], str(model_path))
+            self.assertEqual(result["report"]["intent_model_min_similarity"], 0.8)
+
     def test_generated_dataset_can_be_reported_directly(self):
         from agent.intent_evaluation import build_evaluation_dataset, write_evaluation_report
 
