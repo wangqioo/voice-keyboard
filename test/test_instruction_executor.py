@@ -611,6 +611,29 @@ class InstructionModeExecutorTests(unittest.TestCase):
         llm.edit.assert_not_called()
         self.assertEqual(messages, ["没有可编辑的内容"])
 
+    def test_shortcut_failure_marks_last_status(self):
+        env = MagicMock()
+        env.shortcut_policy_for_invocation.return_value = ShortcutPolicyDecision.missing(
+            "provider invented"
+        )
+        executor = InstructionModeExecutor(MagicMock(), env, show=lambda _message: None)
+
+        executor.execute(VoiceTextOperation("shortcut", name="provider invented"), "", "")
+
+        self.assertEqual(executor.last_status, ("error", "shortcut_missing:provider invented"))
+
+    def test_write_failure_shows_feedback_and_marks_last_status(self):
+        llm = MagicMock()
+        llm.chat_stream.side_effect = RuntimeError("offline")
+        messages = []
+        executor = InstructionModeExecutor(MagicMock(), MagicMock(), show=messages.append)
+        executor._llm = llm
+
+        executor.execute(VoiceTextOperation("write"), "write one", "")
+
+        self.assertEqual(messages, ["AI \u5199\u4f5c\u5931\u8d25\uff0c\u8bf7\u91cd\u8bd5"])
+        self.assertEqual(executor.last_status, ("error", "write:offline"))
+
 
 if __name__ == "__main__":
     unittest.main()

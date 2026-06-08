@@ -46,6 +46,7 @@ class InstructionModeExecutor:
         self._set_status = set_status or (lambda state: None)
         self._text_io = text_io
         self._provider_call_timeout = provider_call_timeout
+        self.last_status: tuple[str, str] = ("ok", "")
 
     def execute(
         self,
@@ -54,14 +55,21 @@ class InstructionModeExecutor:
         selected: str,
         target: TextTarget | None = None,
     ) -> bool:
+        self.last_status = ("ok", operation.kind)
         if operation.kind == "shortcut":
             policy = self._env.shortcut_policy_for_invocation(operation.name)
             if not policy.found:
-                self._show(f"没有找到快捷键：{operation.name}")
+                self._show_failure(
+                    f"没有找到快捷键：{operation.name}",
+                    f"shortcut_missing:{operation.name}",
+                )
                 return True
             elif policy.allowed:
                 if not self._env.send_shortcut(operation.name):
-                    self._show(f"快捷键执行失败：{operation.name}")
+                    self._show_failure(
+                        f"快捷键执行失败：{operation.name}",
+                        f"shortcut_failed:{operation.name}",
+                    )
                     return True
                 elif policy.risk == "high":
                     print(
@@ -70,7 +78,10 @@ class InstructionModeExecutor:
                         f"application={policy.application!r}"
                     )
             else:
-                self._show(f"快捷键需要确认：{operation.name}")
+                self._show_failure(
+                    f"快捷键需要确认：{operation.name}",
+                    f"shortcut_blocked:{operation.name}",
+                )
                 return True
         elif operation.kind == "undo":
             self._do_undo()
@@ -92,6 +103,13 @@ class InstructionModeExecutor:
             return self._do_chat(instruction, operation)
         return False
 
+    def _mark_error(self, detail: str) -> None:
+        self.last_status = ("error", detail)
+
+    def _show_failure(self, message: str, detail: str) -> None:
+        self._mark_error(detail)
+        self._show(message)
+
     def _io(self) -> ContextManager:
         return self._text_io if self._text_io is not None else nullcontext()
 
@@ -99,7 +117,7 @@ class InstructionModeExecutor:
         if result.action == "insert":
             insertion = self._env.insert_generated_text(result.text)
             if insertion.failure == "no_focused_input":
-                self._show("未点击到输入框，已取消输出")
+                self._show_failure("未点击到输入框，已取消输出", "no_focused_input")
             elif insertion.failure == "copied_to_clipboard":
                 self._show_copied(insertion.copied_text or result.text)
                 return True
@@ -118,6 +136,7 @@ class InstructionModeExecutor:
             except Exception as e:
                 print(f"[ai] 聊天回复失败: {e}")
                 self._set_status("error_llm")
+                self._show_failure("AI 回复失败，请重试", f"chat:{e}")
                 return True
         self._show(reply)
         return True
@@ -151,7 +170,7 @@ class InstructionModeExecutor:
             if window.source == "tracked_segment":
                 print("[ai] 未框选内容，默认编辑最后一次输出")
             else:
-                self._show("请先选中你想修改的内容")
+                self._show_failure("请先选中你想修改的内容", "edit_no_target")
                 return
 
         try:
@@ -159,10 +178,12 @@ class InstructionModeExecutor:
         except ProviderCallTimeout:
             print("[ai] 编辑超时")
             self._set_status("error_llm")
-            self._show("处理超时，请重试或先说撤销")
+            self._show_failure("处理超时，请重试或先说撤销", "edit_timeout")
             return
         except Exception as e:
             print(f"[ai] 编辑失败: {e}")
+            self._set_status("error_llm")
+            self._show_failure("AI 编辑失败，请重试", f"edit:{e}")
             return
         print(
             "[ai] 替换计划: "
@@ -174,9 +195,9 @@ class InstructionModeExecutor:
         if result.ok:
             return
         elif result.failure in {"target_not_found", "ambiguous_target", "low_confidence"}:
-            self._show("没有找到明确可替换的内容")
+            self._show_failure("没有找到明确可替换的内容", f"edit_{result.failure}")
         else:
-            self._show("没有可编辑的内容")
+            self._show_failure("没有可编辑的内容", f"edit_{result.failure or 'failed'}")
 
     def _replacement_plan(self, window_text: str, instruction: str) -> ReplacementPlan:
         if hasattr(self._llm, "plan_replacement"):
@@ -251,14 +272,17 @@ class InstructionModeExecutor:
                 generated += chunk
         except Exception as e:
             print(f"[ai] 写作失败: {e}")
+            self._set_status("error_llm")
+            self._show_failure("AI 写作失败，请重试", f"write:{e}")
             return False
 
         text = _finish_write_tail(generated)
         if not text:
+            self._show_failure("AI 没有生成内容，请重试", "write_empty")
             return False
         insertion = self._env.insert_generated_text(text)
         if insertion.failure == "no_focused_input":
-            self._show("未点击到输入框，已取消输出")
+            self._show_failure("未点击到输入框，已取消输出", "no_focused_input")
             return False
         if insertion.failure == "copied_to_clipboard":
             self._show_copied(insertion.copied_text or text)
@@ -272,7 +296,7 @@ class InstructionModeExecutor:
             lookup = self._env.operation_window_for_instruction(prefer_tracked_segment=False)
             if not lookup.ok:
                 if not self._env.delete_all_text_by_shortcut():
-                    self._show("没有可删除的内容")
+                    self._show_failure("没有可删除的内容", f"delete_{lookup.failure}")
                 return
             window = lookup.window
         else:
@@ -280,7 +304,7 @@ class InstructionModeExecutor:
             if window is None:
                 return
             if window.source != "explicit_selection":
-                self._show("请先选中你想删除的内容")
+                self._show_failure("请先选中你想删除的内容", "delete_no_selection")
                 return
         plan = (
             ReplacementPlan(target_text=window.text, replacement_text="")
@@ -295,9 +319,9 @@ class InstructionModeExecutor:
         if result.ok:
             return
         elif result.failure in {"target_not_found", "ambiguous_target", "low_confidence"}:
-            self._show("没有找到明确可删除的内容")
+            self._show_failure("没有找到明确可删除的内容", f"delete_{result.failure}")
         else:
-            self._show("没有可删除的内容")
+            self._show_failure("没有可删除的内容", f"delete_{result.failure or 'failed'}")
 
     def _operation_window_or_prompt(
         self,
@@ -323,7 +347,7 @@ class InstructionModeExecutor:
             prefer_tracked_segment=prefer_tracked_segment
         )
         if not lookup.ok:
-            self._show(f"没有可{noun}的内容")
+            self._show_failure(f"没有可{noun}的内容", f"{action}_no_target")
             return None
         return lookup.window
 
@@ -331,7 +355,7 @@ class InstructionModeExecutor:
         policy = self._env.shortcut_policy_for_invocation("撤销")
         if policy.found and policy.allowed and self._env.send_shortcut("撤销"):
             return
-        self._show("没有找到快捷键：撤销")
+        self._show_failure("没有找到快捷键：撤销", "undo_missing")
 
     def _do_memo_save(self, key: str, value: str, selected: str) -> None:
         self._handle_memo_result(self._memo.save(key, value, selected), selected)

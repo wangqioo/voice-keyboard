@@ -9,6 +9,7 @@ Instruction Mode orchestration：speech recognition → intent classification �
   chat     — 其他（问题、聊天、不确定），只在状态框显示简短 feedback
 """
 
+import queue
 import threading
 
 from agent.ai_intent import (
@@ -23,6 +24,7 @@ from agent.memo import Memo, parse_memo_edit_command
 from agent.voice_text_operation import operation_from_intent
 
 _AI_PREFIX = " [AI]: "
+_INTENT_TIMEOUT_SECONDS = 12.0
 
 
 class AIHandler:
@@ -94,7 +96,6 @@ class AIHandler:
             self._record("ai", text, "ok", "memo_edit")
             self._show(result.message)
             return True
-        self._record("ai", text, "ok")
 
         # 2. 读取上下文（优先用 Explicit Selection，其次用 Tracked Segment）
         target = self._env.target_for_instruction()
@@ -109,7 +110,7 @@ class AIHandler:
 
         # 3. LLM 意图分类
         try:
-            result = classify_intent(self._llm, IntentContext(
+            result = self._classify_intent_with_timeout(IntentContext(
                 text=text,
                 selected=selected,
                 recent_text=context,
@@ -118,7 +119,14 @@ class AIHandler:
                 memo_records=memo_records(
                     self._memo_store,
                 ),
-            ), self._intent_fallbacks)
+            ))
+        except TimeoutError as e:
+            print(f"[ai] 意图分类超时: {e}")
+            self._record("ai", text, "error", "intent_timeout")
+            if self._status is not None:
+                self._status.set_state("error_llm")
+            self._show("AI 理解超时，请重试")
+            return True
         except Exception as e:
             print(f"[ai] 意图分类失败: {e}，回退到聊天")
             self._record("ai", text, "error", f"LLM: {e}")
@@ -129,7 +137,34 @@ class AIHandler:
         operation = operation_from_intent(result)
         print(f"[ai] 意图: {operation.kind}")
 
-        return self._executor.execute(operation, text, selected, target)
+        keep_status = self._executor.execute(operation, text, selected, target)
+        status, detail = getattr(self._executor, "last_status", ("ok", operation.kind))
+        self._record("ai", text, status, detail)
+        return keep_status
+
+    def _classify_intent_with_timeout(self, context: IntentContext) -> dict:
+        out: queue.Queue[tuple[str, object]] = queue.Queue(maxsize=1)
+
+        def run() -> None:
+            try:
+                out.put(("ok", classify_intent(
+                    self._llm,
+                    context,
+                    self._intent_fallbacks,
+                )))
+            except Exception as e:
+                out.put(("error", e))
+
+        threading.Thread(target=run, daemon=True, name="AIIntentClassifier").start()
+        try:
+            status, value = out.get(timeout=_INTENT_TIMEOUT_SECONDS)
+        except queue.Empty:
+            raise TimeoutError(
+                f"intent classification exceeded {_INTENT_TIMEOUT_SECONDS:.1f}s"
+            )
+        if status == "error":
+            raise value
+        return value
 
     def _set_status(self, state: str) -> None:
         if self._status is not None:
