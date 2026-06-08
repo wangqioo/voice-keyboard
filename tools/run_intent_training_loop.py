@@ -57,6 +57,7 @@ def main() -> None:
     print(
         f"inserted={report['upload'].get('inserted', 0)} "
         f"synced={report['sync']['synced']} skipped={report['sync']['skipped']} "
+        f"compacted={report['sync']['compacted']} "
         f"accuracy={report['evaluation']['accuracy_label']} "
         f"correct={report['evaluation']['correct']} total={report['evaluation']['total']}"
     )

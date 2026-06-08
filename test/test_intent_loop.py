@@ -73,7 +73,7 @@ class IntentLoopTests(unittest.TestCase):
             self.assertEqual(http.gets[0]["url"], "http://training.local/v1/intent-samples/corrections")
             self.assertEqual(http.posts[0]["headers"]["Authorization"], "Bearer secret")
             self.assertEqual(report["upload"]["inserted"], 1)
-            self.assertEqual(report["sync"], {"synced": 1, "skipped": 0})
+            self.assertEqual(report["sync"], {"synced": 1, "skipped": 0, "compacted": 0})
             self.assertEqual(report["evaluation"]["accuracy_label"], "100.0%")
             self.assertEqual(
                 find_override("表格里查一下", path=overrides),

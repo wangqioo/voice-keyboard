@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Iterable, Mapping
 
-from agent.intent_overrides import append_override
+from agent.intent_overrides import append_override, compact_overrides
 
 
 def sync_corrected_intents(
@@ -28,7 +28,12 @@ def sync_corrected_intents(
             skipped += 1
             continue
         synced += 1
-    return {"synced": synced, "skipped": skipped}
+    compacted = compact_overrides(path=override_path)
+    return {
+        "synced": synced,
+        "skipped": skipped,
+        "compacted": compacted.get("removed", 0),
+    }
 
 
 def sync_local_corrected_intents(

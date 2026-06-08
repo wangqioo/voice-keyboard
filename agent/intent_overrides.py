@@ -83,6 +83,38 @@ def load_overrides(*, path: Path | str = _DEFAULT_PATH) -> dict[str, dict]:
     return overrides
 
 
+def compact_overrides(*, path: Path | str = _DEFAULT_PATH) -> dict:
+    target = Path(path).expanduser()
+    if not target.exists():
+        return {"kept": 0, "removed": 0}
+    latest: dict[str, dict] = {}
+    valid_rows = 0
+    for line in target.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+            text_key = str(row.get("text_key") or "")
+            intent = normalize_intent(row.get("intent") or {})
+        except Exception:
+            continue
+        if not text_key:
+            continue
+        valid_rows += 1
+        latest[text_key] = {
+            "ts": float(row.get("ts") or time.time()),
+            "text": str(row.get("text") or "")[:240],
+            "text_key": text_key,
+            "intent": intent,
+        }
+    rows = list(latest.values())
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return {"kept": len(rows), "removed": max(0, valid_rows - len(rows))}
+
+
 def normalize_intent(intent: Mapping) -> dict:
     if not isinstance(intent, Mapping):
         raise ValueError("corrected intent must be an object")

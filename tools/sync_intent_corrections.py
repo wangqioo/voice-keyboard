@@ -44,7 +44,7 @@ def main() -> None:
 
     if args.local_only:
         result = sync_local_corrected_intents(args.input, override_path=args.overrides)
-        print(f"synced={result['synced']} skipped={result['skipped']}")
+        print(f"synced={result['synced']} skipped={result['skipped']} compacted={result['compacted']}")
         return
 
     headers = {}
@@ -59,7 +59,7 @@ def main() -> None:
     response.raise_for_status()
     rows = response.json().get("items", [])
     result = sync_corrected_intents(rows, override_path=args.overrides)
-    print(f"synced={result['synced']} skipped={result['skipped']}")
+    print(f"synced={result['synced']} skipped={result['skipped']} compacted={result['compacted']}")
 
 
 if __name__ == "__main__":

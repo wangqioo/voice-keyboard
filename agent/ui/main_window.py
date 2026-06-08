@@ -836,6 +836,7 @@ class _IntentDiagnosticsTab(NSObject):
                     msg = (
                         f"远端同步完成 inserted={report['upload'].get('inserted', 0)} "
                         f"synced={report['sync']['synced']} "
+                        f"compacted={report['sync']['compacted']} "
                         f"accuracy={report['evaluation']['accuracy_label']}"
                     )
                 else:
@@ -843,6 +844,7 @@ class _IntentDiagnosticsTab(NSObject):
                     evaluation = evaluate_reviewed_samples(_INTENT_SAMPLES_PATH, override_path=override_path)
                     msg = (
                         f"本地同步完成 synced={sync['synced']} skipped={sync['skipped']} "
+                        f"compacted={sync['compacted']} "
                         f"accuracy={evaluation['accuracy_label']}"
                     )
                 AppHelper.callAfter(self._sync_finished, msg)
