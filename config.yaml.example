@@ -177,6 +177,8 @@ instruction_mode:
     # 本地轻量意图模型：由 corrected_intent 样本训练出来，在 LLM 之前做精确文本命中。
     intent_model: false
     intent_model_path: ~/.voice-keyboard/intent_model.json
+    # 相似命中阈值。1.0 = 只精确命中；0.8 = 允许轻微前后缀/口语变体。
+    intent_model_min_similarity: 1.0
 
   # Intent training sample collection. Default is off and local-only.
   # It stores sanitized instruction metadata for later rule tuning or model training.

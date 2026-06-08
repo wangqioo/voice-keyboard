@@ -163,8 +163,10 @@ are visible instead of guessed.
 ## Local Intent Model
 
 The first local model is intentionally lightweight: it maps normalized corrected
-instruction text to a corrected intent. It is conservative and only does exact
+instruction text to a corrected intent. By default it only does exact
 normalized-text matches, so it can be enabled before a broader classifier exists.
+You can optionally lower `intent_model_min_similarity` for high-threshold
+similar-expression matching after checking it against an evaluation dataset.
 
 Train it from corrected samples:
 
@@ -182,10 +184,18 @@ instruction_mode:
   intent_fallbacks:
     intent_model: true
     intent_model_path: ~/.voice-keyboard/intent_model.json
+    intent_model_min_similarity: 1.0
 ```
 
 Runtime order is:
 
 1. Local hard rules and corrected overrides.
-2. Local intent model exact match.
+2. Local intent model exact match, plus optional high-threshold similar-expression match.
 3. LLM classifier.
+
+Recommended rollout:
+
+- Keep `intent_model_min_similarity: 1.0` for exact-only matching.
+- Try `0.8` only after evaluating real corrected samples; it can handle light
+  variants such as extra polite prefixes/suffixes, but should not replace a
+  proper classifier.

@@ -16,12 +16,23 @@ class IntentModel:
     examples: dict[str, dict]
     version: str = ""
 
-    def match(self, text: str) -> dict | None:
+    def match(self, text: str, *, min_similarity: float = 0.0) -> dict | None:
         text_key = normalize_instruction_text(text)
         if not text_key:
             return None
         intent = self.examples.get(text_key)
-        return dict(intent) if intent else None
+        if intent:
+            return dict(intent)
+        if min_similarity <= 0 or min_similarity >= 1.0:
+            return None
+        best_intent = None
+        best_score = 0.0
+        for candidate_key, candidate_intent in self.examples.items():
+            score = _text_similarity(text_key, candidate_key)
+            if score > best_score:
+                best_score = score
+                best_intent = candidate_intent
+        return dict(best_intent) if best_intent and best_score >= min_similarity else None
 
 
 def train_intent_model(source: Path | str, output: Path | str, *, version: str = "") -> dict:
@@ -96,3 +107,23 @@ def _load_jsonl(path: Path) -> list[dict]:
         if isinstance(row, dict):
             rows.append(row)
     return rows
+
+
+def _text_similarity(left: str, right: str) -> float:
+    if left == right:
+        return 1.0
+    left_parts = _char_ngrams(left)
+    right_parts = _char_ngrams(right)
+    if not left_parts or not right_parts:
+        return 0.0
+    overlap = len(left_parts & right_parts)
+    jaccard = overlap / len(left_parts | right_parts)
+    containment = overlap / min(len(left_parts), len(right_parts))
+    return max(jaccard, containment)
+
+
+def _char_ngrams(text: str) -> set[str]:
+    clean = str(text or "")
+    if len(clean) <= 1:
+        return {clean} if clean else set()
+    return {clean[i:i + 2] for i in range(len(clean) - 1)}

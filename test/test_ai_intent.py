@@ -98,6 +98,33 @@ class AIIntentTests(unittest.TestCase):
             self.assertEqual(details.source, "local")
             llm.chat.assert_not_called()
 
+    def test_local_intent_model_can_match_high_similarity_variant(self):
+        from agent.intent_model import train_intent_model
+
+        with tempfile.TemporaryDirectory() as td:
+            samples = Path(td) / "samples.jsonl"
+            model_path = Path(td) / "intent_model.json"
+            samples.write_text(
+                '{"text": "查找一下", "corrected_intent": {"type": "shortcut", "name": "查找"}}\n',
+                encoding="utf-8",
+            )
+            train_intent_model(samples, model_path)
+            llm = MagicMock()
+            llm.chat.return_value = '{"type":"chat","reply":"x"}'
+
+            result = classify_intent(
+                llm,
+                IntentContext(text="帮我查找一下", shortcuts=("查找",)),
+                IntentFallbackOptions(
+                    intent_model=True,
+                    intent_model_path=str(model_path),
+                    intent_model_min_similarity=0.8,
+                ),
+            )
+
+            self.assertEqual(result, {"type": "shortcut", "name": "查找"})
+            llm.chat.assert_not_called()
+
     def test_selected_translation_instruction_overrides_write_by_default(self):
         llm = MagicMock()
         llm.chat.return_value = '{"type":"write"}'

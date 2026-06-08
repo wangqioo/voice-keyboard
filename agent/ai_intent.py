@@ -83,6 +83,7 @@ class IntentFallbackOptions:
     intent_overrides_path: str = ""
     intent_model: bool = False
     intent_model_path: str = ""
+    intent_model_min_similarity: float = 1.0
     local_confidence_threshold: IntentConfidence = "high"
 
     @classmethod
@@ -102,6 +103,7 @@ class IntentFallbackOptions:
             intent_overrides_path=str(cfg.get("intent_overrides_path", "")),
             intent_model=bool(cfg.get("intent_model", bool(cfg.get("intent_model_path", "")))),
             intent_model_path=str(cfg.get("intent_model_path", "")),
+            intent_model_min_similarity=float(cfg.get("intent_model_min_similarity", 1.0)),
             local_confidence_threshold=str(cfg.get("local_confidence_threshold", "high")),
         )
 
@@ -319,7 +321,7 @@ def _model_intent_from_text(
     model = load_intent_model(fallbacks.intent_model_path)
     if model is None:
         return None
-    intent = model.match(ctx.text)
+    intent = model.match(ctx.text, min_similarity=fallbacks.intent_model_min_similarity)
     if not intent:
         return None
     return intent if _override_is_available(intent, ctx) else None
