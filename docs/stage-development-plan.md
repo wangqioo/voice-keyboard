@@ -94,6 +94,7 @@
 - 支持离线评测报告接入本地意图模型和相似阈值，便于比较 `baseline` 与模型版本。
 - 支持本地意图模型版本 registry、版本列表、激活指定版本和回滚上一版本。
 - 一键训练闭环支持同步纠错后训练模型版本，并写出对应模型评测报告。
+- Mac 意图诊断页支持查看当前模型版本、训练模型并回滚到上一版本。
 - 新增 `tools/sync_intent_corrections.py` 纠错同步工具。
 - 新增 `tools/run_intent_training_loop.py` 一键训练闭环工具。
 - 新增 `docs/intent-training-server.md` 服务端使用说明。

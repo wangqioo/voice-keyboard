@@ -45,11 +45,14 @@ from agent.intent_diagnostics import (
 )
 from agent.intent_loop import run_training_loop
 from agent.intent_evaluation import evaluate_reviewed_samples
+from agent.intent_model_ui import get_model_status, rollback_model_for_ui, train_local_model_for_ui
 from agent.intent_sync import sync_local_corrected_intents
 from agent.intent_training import _DEFAULT_PATH as _INTENT_SAMPLES_PATH
 
 _USER_DIR = Path.home() / ".voice-keyboard"
 _USER_CONFIG = _USER_DIR / "config.yaml"
+_INTENT_MODEL_REGISTRY = _USER_DIR / "intent_models"
+_INTENT_MODEL_REPORTS = _USER_DIR / "intent_eval_reports"
 
 
 def _load_user_config() -> dict:
@@ -676,8 +679,14 @@ class _IntentDiagnosticsTab(NSObject):
         v.addSubview_(summary_label)
         self._summary_label = summary_label
 
-        v.addSubview_(_label("意图", NSMakeRect(20, 388, 40, 20)))
-        intent_box = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(62, 384, 150, 26))
+        model_label = _label("", NSMakeRect(20, 396, 280, 20))
+        v.addSubview_(model_label)
+        self._model_label = model_label
+        v.addSubview_(_button("训练模型", NSMakeRect(310, 392, 90, 26), self, b"trainModel:"))
+        v.addSubview_(_button("回滚模型", NSMakeRect(410, 392, 90, 26), self, b"rollbackModel:"))
+
+        v.addSubview_(_label("意图", NSMakeRect(20, 366, 40, 20)))
+        intent_box = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(62, 362, 150, 26))
         for item in ("全部", "chat", "shortcut", "write", "edit", "delete", "memo", "app_launch", "system_action"):
             intent_box.addItemWithTitle_(item)
         intent_box.setTarget_(self)
@@ -685,8 +694,8 @@ class _IntentDiagnosticsTab(NSObject):
         v.addSubview_(intent_box)
         self._intent_filter = intent_box
 
-        v.addSubview_(_label("标注", NSMakeRect(230, 388, 40, 20)))
-        review_box = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(272, 384, 130, 26))
+        v.addSubview_(_label("标注", NSMakeRect(230, 366, 40, 20)))
+        review_box = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(272, 362, 130, 26))
         for item in ("全部", "未标注", "已标注"):
             review_box.addItemWithTitle_(item)
         review_box.setTarget_(self)
@@ -694,7 +703,7 @@ class _IntentDiagnosticsTab(NSObject):
         v.addSubview_(review_box)
         self._review_filter = review_box
 
-        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(20, 245, 560, 130))
+        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(20, 235, 560, 118))
         scroll.setHasVerticalScroller_(True)
         scroll.setBorderType_(1)
         table = NSTableView.alloc().initWithFrame_(scroll.bounds())
@@ -853,6 +862,50 @@ class _IntentDiagnosticsTab(NSObject):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def trainModel_(self, sender):
+        override_path = Path.home() / ".voice-keyboard" / "intent_overrides.jsonl"
+        self._model_label.setStringValue_("模型：正在训练并评测...")
+
+        def worker():
+            try:
+                result = train_local_model_for_ui(
+                    sample_path=_INTENT_SAMPLES_PATH,
+                    registry_dir=_INTENT_MODEL_REGISTRY,
+                    report_dir=_INTENT_MODEL_REPORTS,
+                    override_path=override_path,
+                    min_similarity=0.8,
+                )
+                model = result["model"]
+                evaluation = result["evaluation"]["report"]
+                msg = (
+                    f"version={model['version']} examples={model['examples']} "
+                    f"accuracy={evaluation['accuracy_label']} "
+                    f"report={result['evaluation']['path']}"
+                )
+                AppHelper.callAfter(self._model_action_finished, "模型训练完成", msg)
+            except Exception as e:
+                AppHelper.callAfter(self._alert, "模型训练失败", str(e))
+                AppHelper.callAfter(self._refresh_model_status)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def rollbackModel_(self, sender):
+        self._model_label.setStringValue_("模型：正在回滚...")
+
+        def worker():
+            try:
+                result = rollback_model_for_ui(_INTENT_MODEL_REGISTRY)
+                msg = (
+                    f"{result['previous_version']} -> {result['version']} "
+                    f"examples={result['examples']}"
+                )
+                AppHelper.callAfter(self._model_action_finished, "模型回滚完成", msg)
+            except Exception as e:
+                AppHelper.callAfter(self._alert, "模型回滚失败", str(e))
+                AppHelper.callAfter(self._refresh_model_status)
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def showMismatches_(self, sender):
         try:
             summary = summarize_diagnostics(_INTENT_SAMPLES_PATH)
@@ -898,6 +951,11 @@ class _IntentDiagnosticsTab(NSObject):
     def _sync_finished(self, msg: str):
         self.reload_(None)
         self._alert("同步评测完成", msg)
+
+    @objc.python_method
+    def _model_action_finished(self, title: str, msg: str):
+        self.reload_(None)
+        self._alert(title, msg)
 
     @objc.python_method
     def _selected_row(self):
@@ -984,6 +1042,18 @@ class _IntentDiagnosticsTab(NSObject):
         except Exception as e:
             text = f"统计失败: {e}"
         self._summary_label.setStringValue_(text)
+        self._refresh_model_status()
+
+    @objc.python_method
+    def _refresh_model_status(self):
+        try:
+            status = get_model_status(_INTENT_MODEL_REGISTRY)
+            current = status.get("current_version") or "未训练"
+            count = status.get("version_count", 0)
+            text = f"模型：当前 {current} / 版本 {count}"
+        except Exception as e:
+            text = f"模型：读取失败 {e}"
+        self._model_label.setStringValue_(text)
 
     @objc.python_method
     def _alert(self, title, msg):
