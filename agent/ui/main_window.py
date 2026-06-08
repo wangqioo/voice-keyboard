@@ -626,7 +626,25 @@ class _IntentDiagnosticsTab(NSObject):
         v.addSubview_(_button("打开样本文件", NSMakeRect(110, 440, 120, 26), self, b"openSamples:"))
         v.addSubview_(_label(str(_INTENT_SAMPLES_PATH), NSMakeRect(240, 444, 340, 20)))
 
-        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(20, 220, 560, 210))
+        v.addSubview_(_label("意图", NSMakeRect(20, 408, 40, 20)))
+        intent_box = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(62, 404, 150, 26))
+        for item in ("全部", "chat", "shortcut", "write", "edit", "delete", "memo", "app_launch", "system_action"):
+            intent_box.addItemWithTitle_(item)
+        intent_box.setTarget_(self)
+        intent_box.setAction_(b"reload:")
+        v.addSubview_(intent_box)
+        self._intent_filter = intent_box
+
+        v.addSubview_(_label("标注", NSMakeRect(230, 408, 40, 20)))
+        review_box = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(272, 404, 130, 26))
+        for item in ("全部", "未标注", "已标注"):
+            review_box.addItemWithTitle_(item)
+        review_box.setTarget_(self)
+        review_box.setAction_(b"reload:")
+        v.addSubview_(review_box)
+        self._review_filter = review_box
+
+        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(20, 220, 560, 175))
         scroll.setHasVerticalScroller_(True)
         scroll.setBorderType_(1)
         table = NSTableView.alloc().initWithFrame_(scroll.bounds())
@@ -714,7 +732,12 @@ class _IntentDiagnosticsTab(NSObject):
 
     def reload_(self, sender):
         try:
-            self._rows = load_diagnostics_rows(_INTENT_SAMPLES_PATH, limit=300)
+            self._rows = load_diagnostics_rows(
+                _INTENT_SAMPLES_PATH,
+                limit=300,
+                intent_type=self._selected_intent_filter(),
+                review_state=self._selected_review_filter(),
+            )
         except Exception as e:
             print(f"[ui] intent diagnostics load 失败: {e}")
             self._rows = []
@@ -766,6 +789,20 @@ class _IntentDiagnosticsTab(NSObject):
         if idx < 0 or idx >= len(self._rows):
             return None
         return self._rows[idx]
+
+    @objc.python_method
+    def _selected_intent_filter(self) -> str:
+        value = self._intent_filter.titleOfSelectedItem() or ""
+        return "" if value == "全部" else value
+
+    @objc.python_method
+    def _selected_review_filter(self) -> str:
+        value = self._review_filter.titleOfSelectedItem() or ""
+        if value == "已标注":
+            return "reviewed"
+        if value == "未标注":
+            return "unreviewed"
+        return ""
 
     @objc.python_method
     def _load_selected(self):
