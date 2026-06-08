@@ -17,6 +17,15 @@ from typing import Iterable
 
 _DEFAULT_PATH = Path.home() / ".voice-keyboard" / "intent_samples.jsonl"
 _MAX_TEXT_LENGTH = 240
+_REVIEW_LABELS = {
+    "",
+    "correct",
+    "wrong_intent",
+    "wrong_target",
+    "unsafe_should_confirm",
+    "missing_shortcut",
+    "unclear",
+}
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
 _PHONE_RE = re.compile(r"(?<!\d)(?:\+?\d[\d -]{7,}\d)(?!\d)")
@@ -97,6 +106,8 @@ class IntentTrainingRecorder:
             "intent_cache_hit": bool(result.get("_intent_cache_hit")),
             "status": status,
             "detail": _sanitize_text(detail, 240),
+            "review_label": "",
+            "review_note": "",
         }
         try:
             self._config.path.parent.mkdir(parents=True, exist_ok=True)
@@ -129,6 +140,40 @@ def export_samples(
     else:
         raise ValueError("fmt must be 'jsonl' or 'csv'")
     return target_path
+
+
+def load_samples(
+    source: Path | str = _DEFAULT_PATH,
+    *,
+    limit: int = 300,
+) -> list[dict]:
+    rows = _load_samples(Path(source).expanduser())
+    if limit > 0:
+        return rows[-limit:]
+    return rows
+
+
+def update_sample_review(
+    source: Path | str,
+    index: int,
+    *,
+    label: str,
+    note: str = "",
+) -> dict:
+    path = Path(source).expanduser()
+    rows = _load_samples(path)
+    if index < 0 or index >= len(rows):
+        raise IndexError("sample index out of range")
+    normalized_label = str(label or "").strip()
+    if normalized_label not in _REVIEW_LABELS:
+        raise ValueError(f"unsupported review label: {normalized_label}")
+    rows[index]["review_label"] = normalized_label
+    rows[index]["review_note"] = _sanitize_text(note, 240)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return rows[index]
 
 
 def _load_samples(path: Path) -> list[dict]:

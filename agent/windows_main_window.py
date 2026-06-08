@@ -13,6 +13,7 @@ from tkinter import messagebox, ttk
 import yaml
 
 from agent.history import History
+from agent.intent_training import load_samples, update_sample_review
 from agent.memo_store import MemoStore
 
 
@@ -62,6 +63,7 @@ class WindowsMainWindow:
         self._queue: queue.Queue[str] = queue.Queue()
         self._root: tk.Tk | None = None
         self._history_rows: list[dict] = []
+        self._intent_rows: list[tuple[int, dict]] = []
         self._memo_keys: list[str] = []
         self._vars: dict[str, tk.StringVar] = {}
 
@@ -126,6 +128,7 @@ class WindowsMainWindow:
         self._tabs.pack(fill="both", expand=True)
         self._build_overview_tab()
         self._build_history_tab()
+        self._build_intent_diagnostics_tab()
         self._build_memo_tab()
         self._build_hotkeys_tab()
         self._build_config_tab()
@@ -166,6 +169,57 @@ class WindowsMainWindow:
             self._history_tree.column(col, width=width, anchor="w")
         self._history_tree.pack(fill="both", expand=True, pady=(8, 0))
         self._history_tree.bind("<Double-1>", lambda _event: self._insert_history())
+
+    def _build_intent_diagnostics_tab(self) -> None:
+        tab = self._tab("\u610f\u56fe\u8bca\u65ad", "Intent Diagnostics")
+        top = ttk.Frame(tab)
+        top.pack(fill="x")
+        self._intent_search = tk.StringVar()
+        ttk.Label(top, text=self._t("\u641c\u7d22", "Search")).pack(side="left")
+        ttk.Entry(top, textvariable=self._intent_search, width=28).pack(side="left", padx=6)
+        ttk.Button(top, text=self._t("\u5237\u65b0", "Refresh"), command=self._refresh_intent_samples).pack(side="left")
+        ttk.Button(top, text=self._t("\u6253\u5f00\u6587\u4ef6", "Open File"), command=self._open_intent_samples_file).pack(side="right")
+
+        body = ttk.PanedWindow(tab, orient="vertical")
+        body.pack(fill="both", expand=True, pady=(8, 0))
+
+        list_frame = ttk.Frame(body)
+        body.add(list_frame, weight=3)
+        cols = ("time", "type", "source", "confidence", "status", "review", "text")
+        self._intent_tree = ttk.Treeview(list_frame, columns=cols, show="headings", height=12)
+        widths = (
+            ("time", 140), ("type", 90), ("source", 80), ("confidence", 90),
+            ("status", 80), ("review", 150), ("text", 420),
+        )
+        for col, width in widths:
+            self._intent_tree.heading(col, text=col)
+            self._intent_tree.column(col, width=width, anchor="w")
+        self._intent_tree.pack(fill="both", expand=True)
+        self._intent_tree.bind("<<TreeviewSelect>>", lambda _event: self._load_selected_intent_sample())
+
+        detail = ttk.Frame(body)
+        body.add(detail, weight=2)
+        form = ttk.Frame(detail)
+        form.pack(fill="x")
+        ttk.Label(form, text=self._t("\u6807\u7b7e", "Label")).grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
+        self._intent_review_label = tk.StringVar()
+        self._intent_review_box = ttk.Combobox(
+            form,
+            textvariable=self._intent_review_label,
+            values=("", "correct", "wrong_intent", "wrong_target", "unsafe_should_confirm", "missing_shortcut", "unclear"),
+            width=28,
+            state="readonly",
+        )
+        self._intent_review_box.grid(row=0, column=1, sticky="w", pady=4)
+        ttk.Button(form, text=self._t("\u4fdd\u5b58\u53cd\u9988", "Save Feedback"), command=self._save_intent_review).grid(row=0, column=2, sticky="w", padx=8, pady=4)
+        ttk.Button(form, text=self._t("\u590d\u5236\u6587\u672c", "Copy Text"), command=self._copy_intent_text).grid(row=0, column=3, sticky="w", pady=4)
+
+        ttk.Label(detail, text=self._t("\u5907\u6ce8", "Note")).pack(anchor="w", pady=(6, 0))
+        self._intent_review_note = tk.Text(detail, height=3, wrap="word")
+        self._intent_review_note.pack(fill="x")
+        ttk.Label(detail, text=self._t("\u8be6\u60c5", "Details")).pack(anchor="w", pady=(6, 0))
+        self._intent_detail = tk.Text(detail, height=7, wrap="word")
+        self._intent_detail.pack(fill="both", expand=True)
 
     def _build_memo_tab(self) -> None:
         tab = self._tab("\u8bb0\u5fc6\u5e93", "Memo Library")
@@ -240,6 +294,7 @@ class WindowsMainWindow:
     def refresh_all(self) -> None:
         self._refresh_overview()
         self._refresh_history()
+        self._refresh_intent_samples()
         self._refresh_memo()
         self._load_config_fields()
         self._refresh_check()
@@ -289,6 +344,102 @@ class WindowsMainWindow:
         text = self._selected_history_text()
         if text:
             self._insert_text(text, self._t("\u5df2\u63d2\u5165\u5386\u53f2\u8bb0\u5f55", "History inserted"))
+
+    def _intent_samples_path(self) -> Path:
+        cfg = _read_config()
+        instruction = cfg.get("instruction_mode") or {}
+        training = instruction.get("intent_training") or {}
+        return Path(str(training.get("path") or (_USER_DIR / "intent_samples.jsonl"))).expanduser()
+
+    def _refresh_intent_samples(self) -> None:
+        if not hasattr(self, "_intent_tree"):
+            return
+        path = self._intent_samples_path()
+        query = self._intent_search.get().strip().lower() if hasattr(self, "_intent_search") else ""
+        rows = list(enumerate(load_samples(path, limit=0)))
+        if query:
+            rows = [item for item in rows if query in str(item[1].get("text") or "").lower()]
+        self._intent_rows = list(reversed(rows[-300:]))
+        self._intent_tree.delete(*self._intent_tree.get_children())
+        for display_index, (_file_index, row) in enumerate(self._intent_rows):
+            ts = row.get("ts") or 0
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(ts))) if ts else ""
+            text = " ".join(str(row.get("text") or "").split())
+            self._intent_tree.insert("", "end", iid=str(display_index), values=(
+                stamp,
+                row.get("intent_type", ""),
+                row.get("intent_source", ""),
+                row.get("intent_confidence", ""),
+                row.get("status", ""),
+                row.get("review_label", ""),
+                text,
+            ))
+        self._clear_intent_detail()
+
+    def _selected_intent_row(self) -> tuple[int, dict] | None:
+        selected = self._intent_tree.selection()
+        if not selected:
+            return None
+        return self._intent_rows[int(selected[0])]
+
+    def _load_selected_intent_sample(self) -> None:
+        selected = self._selected_intent_row()
+        if selected is None:
+            return
+        _file_index, row = selected
+        self._intent_review_label.set(str(row.get("review_label") or ""))
+        self._set_text(self._intent_review_note, str(row.get("review_note") or ""))
+        detail_lines = [
+            f"text: {row.get('text', '')}",
+            f"type: {row.get('intent_type', '')}",
+            f"name: {row.get('intent_name', '')}",
+            f"key: {row.get('intent_key', '')}",
+            f"source: {row.get('intent_source', '')}",
+            f"confidence: {row.get('intent_confidence', '')}",
+            f"cache_hit: {row.get('intent_cache_hit', '')}",
+            f"app: {row.get('active_application', '')}",
+            f"selection: {row.get('has_selection', False)} len={row.get('selected_length', 0)}",
+            f"recent: {row.get('has_recent_text', False)} len={row.get('recent_text_length', 0)}",
+            f"shortcuts: {row.get('shortcut_count', 0)}",
+            f"status: {row.get('status', '')}",
+            f"detail: {row.get('detail', '')}",
+            f"hash: {row.get('text_hash', '')}",
+        ]
+        self._set_text(self._intent_detail, "\n".join(detail_lines))
+
+    def _clear_intent_detail(self) -> None:
+        if hasattr(self, "_intent_review_label"):
+            self._intent_review_label.set("")
+        if hasattr(self, "_intent_review_note"):
+            self._set_text(self._intent_review_note, "")
+        if hasattr(self, "_intent_detail"):
+            self._set_text(self._intent_detail, "")
+
+    def _save_intent_review(self) -> None:
+        selected = self._selected_intent_row()
+        if selected is None:
+            return
+        file_index, _row = selected
+        path = self._intent_samples_path()
+        note = self._intent_review_note.get("1.0", "end").strip()
+        try:
+            update_sample_review(
+                path,
+                file_index,
+                label=self._intent_review_label.get(),
+                note=note,
+            )
+        except Exception as e:
+            messagebox.showerror("Voice Keyboard", str(e))
+            return
+        self._notify_text(self._t("\u53cd\u9988\u5df2\u4fdd\u5b58", "Feedback saved"))
+        self._refresh_intent_samples()
+
+    def _copy_intent_text(self) -> None:
+        selected = self._selected_intent_row()
+        if selected is None:
+            return
+        self._copy_text(str(selected[1].get("text") or ""))
 
     def _refresh_memo(self) -> None:
         self._memo = MemoStore()
@@ -394,6 +545,12 @@ class WindowsMainWindow:
     @staticmethod
     def _check_line(ok: bool, name: str, detail: str) -> str:
         return f"[{'OK' if ok else '!!'}] {name}: {detail}"
+
+    def _open_intent_samples_file(self) -> None:
+        path = self._intent_samples_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch(exist_ok=True)
+        os.startfile(str(path))
 
     def _open_history_file(self) -> None:
         self._history.path.parent.mkdir(parents=True, exist_ok=True)
