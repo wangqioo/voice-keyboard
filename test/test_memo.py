@@ -70,7 +70,7 @@ class MemoTests(unittest.TestCase):
 
     def test_list_all_redacts_sensitive_memo_values(self):
         store = FakeMemoStore()
-        store.data["小米的api密钥"] = "sk-testonlydummyvalue000000000000000000"
+        store.data["小米的api密钥"] = "test-only-dummy-api-key"
         store.data["访问我家服务器的地址"] = "ssh -p 10281 wq@5.tcp.cpolar.cn"
         memo = Memo(store)
 

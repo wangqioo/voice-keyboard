@@ -31,7 +31,7 @@ class MainHelperTests(unittest.TestCase):
         }))
         self.assertTrue(_llm_configured({
             "provider": "openai",
-            "api_key": "sk-test",
+            "api_key": "test-api-key",
         }))
 
     def test_configure_ssl_cert_file_sets_certifi_when_env_is_missing(self):

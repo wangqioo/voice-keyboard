@@ -65,18 +65,18 @@ class SpeechInterpretationProviderFactoryTests(unittest.TestCase):
     def test_creates_dictation_mode_provider_when_ready(self):
         stt = self.factory.create_dictation_stt({
             "provider": "openai",
-            "api_key": "sk-test",
+            "api_key": "test-api-key",
         })
 
         self.assertIsInstance(stt, FakeSTT)
-        self.assertEqual(stt.cfg["api_key"], "sk-test")
+        self.assertEqual(stt.cfg["api_key"], "test-api-key")
 
     def test_text_operation_editor_uses_existing_readiness_rules(self):
         self.assertIsNone(self.factory.create_text_operation_editor({}))
 
         editor = self.factory.create_text_operation_editor({
             "provider": "openai",
-            "api_key": "sk-test",
+            "api_key": "test-api-key",
         })
 
         self.assertIsInstance(editor, FakeLLM)
@@ -93,13 +93,13 @@ class SpeechInterpretationProviderFactoryTests(unittest.TestCase):
         dictation_stt = FakeSTT({"name": "dictation"})
 
         instruction_stt = self.factory.create_instruction_stt(
-            {"provider": "glm_asr_2512", "api_key": "sk-ai"},
+            {"provider": "glm_asr_2512", "api_key": "test-ai-key"},
             dictation_stt,
         )
 
         self.assertIsInstance(instruction_stt, FakeSTT)
         self.assertIsNot(instruction_stt, dictation_stt)
-        self.assertEqual(instruction_stt.cfg["api_key"], "sk-ai")
+        self.assertEqual(instruction_stt.cfg["api_key"], "test-ai-key")
         self.assertEqual(
             self.messages,
             ["[agent] AI 键 STT 使用独立 provider: glm_asr_2512"],
@@ -110,7 +110,7 @@ class SpeechInterpretationProviderFactoryTests(unittest.TestCase):
 
         utterance_stt = self.factory.create_utterance_stt(
             dictation_stt,
-            {"provider": "glm_asr_2512", "api_key": "sk-polish", "name": "polished"},
+            {"provider": "glm_asr_2512", "api_key": "test-polish-key", "name": "polished"},
             {},
         )
 
@@ -127,7 +127,7 @@ class SpeechInterpretationProviderFactoryTests(unittest.TestCase):
         utterance_stt = self.factory.create_utterance_stt(
             dictation_stt,
             {},
-            {"provider": "zhipuai", "api_key": "sk-zhipu"},
+            {"provider": "zhipuai", "api_key": "test-zhipu-key"},
         )
 
         self.assertIs(utterance_stt, dictation_stt)
@@ -135,10 +135,10 @@ class SpeechInterpretationProviderFactoryTests(unittest.TestCase):
 
     def test_provider_set_concentrates_all_configured_construction(self):
         providers = self.factory.create_provider_set({
-            "stt": {"provider": "openai", "api_key": "sk-dictation"},
-            "llm": {"provider": "openai", "api_key": "sk-llm"},
-            "ai_stt": {"provider": "glm_asr_2512", "api_key": "sk-ai"},
-            "polish_stt": {"provider": "glm_asr_2512", "api_key": "sk-polish"},
+            "stt": {"provider": "openai", "api_key": "test-dictation-key"},
+            "llm": {"provider": "openai", "api_key": "test-llm-key"},
+            "ai_stt": {"provider": "glm_asr_2512", "api_key": "test-ai-key"},
+            "polish_stt": {"provider": "glm_asr_2512", "api_key": "test-polish-key"},
         })
 
         self.assertIsNotNone(providers)

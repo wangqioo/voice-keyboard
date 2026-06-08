@@ -5,26 +5,83 @@ from __future__ import annotations
 import ctypes
 import queue
 import threading
+import time
 from ctypes import wintypes
 
+from agent import config as app_config
 
-_STATES: dict[str, tuple[str, int]] = {
-    "recording": ("录音中", 0x5252F0),
-    "polish_recording": ("录音中 · 微润色", 0x78C931),
-    "ai_recording": ("AI 指令录音中", 0xF755A8),
-    "recognizing": ("识别中", 0x0B9EF5),
-    "empty_stt": ("未识别到语句", 0x0B9EF5),
-    "polishing": ("润色中", 0xD4B606),
-    "ai_processing": ("AI 处理中", 0xF6823B),
-    "error_stt": ("识别失败", 0x4444EF),
-    "error_typing": ("打字失败", 0x4444EF),
-    "error_llm": ("LLM 失败", 0x4444EF),
-    "error_perm": ("权限未授予", 0x4444EF),
-    "dictation_disabled": ("语音转写已关闭", 0x999999),
-    "dictation_enabled": ("语音转写已开启", 0x78C931),
-    "dictation_mode": ("已切换到原文转文字", 0x5252F0),
-    "polish_mode": ("已切换到微润色转文字", 0x78C931),
+
+_STATE_TEXT: dict[str, dict[str, str]] = {
+    "zh": {
+        "recording": "\u5f55\u97f3\u4e2d",
+        "polish_recording": "\u5f55\u97f3\u4e2d - \u5fae\u6da6\u8272",
+        "ai_recording": "AI \u6307\u4ee4\u5f55\u97f3\u4e2d",
+        "recognizing": "\u8bc6\u522b\u4e2d",
+        "empty_stt": "\u672a\u8bc6\u522b\u5230\u8bed\u53e5",
+        "polishing": "\u6da6\u8272\u4e2d",
+        "ai_processing": "AI \u5904\u7406\u4e2d",
+        "error_stt": "\u8bc6\u522b\u5931\u8d25",
+        "error_typing": "\u6253\u5b57\u5931\u8d25",
+        "error_llm": "LLM \u5931\u8d25",
+        "error_perm": "\u6743\u9650\u672a\u6388\u4e88",
+        "dictation_disabled": "\u8bed\u97f3\u8f6c\u5199\u5df2\u5173\u95ed",
+        "dictation_enabled": "\u8bed\u97f3\u8f6c\u5199\u5df2\u5f00\u542f",
+        "dictation_mode": "\u5df2\u5207\u6362\u5230\u539f\u6587\u8f6c\u6587\u5b57",
+        "polish_mode": "\u5df2\u5207\u6362\u5230\u5fae\u6da6\u8272\u8f6c\u6587\u5b57",
+    },
+    "en": {
+        "recording": "Recording",
+        "polish_recording": "Recording - polish",
+        "ai_recording": "AI command recording",
+        "recognizing": "Recognizing",
+        "empty_stt": "No speech recognized",
+        "polishing": "Polishing",
+        "ai_processing": "AI processing",
+        "error_stt": "Recognition failed",
+        "error_typing": "Typing failed",
+        "error_llm": "LLM failed",
+        "error_perm": "Permission missing",
+        "dictation_disabled": "Dictation disabled",
+        "dictation_enabled": "Dictation enabled",
+        "dictation_mode": "Dictation mode",
+        "polish_mode": "Polish mode",
+    },
 }
+_STATE_COLORS: dict[str, int] = {
+    "recording": 0x5252F0,
+    "polish_recording": 0x78C931,
+    "ai_recording": 0xF755A8,
+    "recognizing": 0x0B9EF5,
+    "empty_stt": 0x0B9EF5,
+    "polishing": 0xD4B606,
+    "ai_processing": 0xF6823B,
+    "error_stt": 0x4444EF,
+    "error_typing": 0x4444EF,
+    "error_llm": 0x4444EF,
+    "error_perm": 0x4444EF,
+    "dictation_disabled": 0x999999,
+    "dictation_enabled": 0x78C931,
+    "dictation_mode": 0x5252F0,
+    "polish_mode": 0x78C931,
+}
+
+
+def _language() -> str:
+    try:
+        ui = app_config.load().get("ui", {})
+    except Exception:
+        return "zh"
+    language = str(ui.get("language", "zh")).lower()
+    return "en" if language.startswith("en") else "zh"
+
+
+def _state_info(state: str) -> tuple[str, int] | None:
+    text = _STATE_TEXT.get(_language(), _STATE_TEXT["zh"]).get(state)
+    color = _STATE_COLORS.get(state)
+    if text is None or color is None:
+        return None
+    return text, color
+
 
 _ERROR_STATES = {
     "error_stt", "error_typing", "error_llm", "error_perm", "empty_stt",
@@ -153,19 +210,33 @@ class StatusWindow:
             _user32.PostMessageW(self._hwnd, _WM_APP_MESSAGE, 0, 0)
         threading.Timer(seconds, self._hide_message, args=(token,)).start()
 
-    def show_typing_message(self, text: str, seconds: float = 6.0, interval: float = 0.006) -> None:
+    def show_typing_message(self, text: str, seconds: float = 6.0, interval: float = 0.016) -> None:
         self._message_token += 1
         token = self._message_token
 
         def run() -> None:
-            step = max(1, len(text) // 36)
-            for idx in range(step, len(text) + step, step):
+            if not text:
+                self.show_message(text, seconds)
+                return
+            # The STT result arrives as a complete string, so make the HUD animation
+            # catch up quickly instead of pretending to stream at a fixed slow rate.
+            target_duration = min(0.9, max(0.18, len(text) * 0.006))
+            chars_per_second = max(80.0, len(text) / target_duration)
+            started = time.monotonic()
+            last_len = 0
+            while True:
                 if token != self._message_token:
                     return
-                self._q.put(("message", text[:idx], token, text))
-                if self._hwnd:
-                    _user32.PostMessageW(self._hwnd, _WM_APP_MESSAGE, 0, 0)
-                threading.Event().wait(interval)
+                elapsed = time.monotonic() - started
+                next_len = min(len(text), max(1, int(elapsed * chars_per_second)))
+                if next_len != last_len:
+                    self._q.put(("message", text[:next_len], token, text))
+                    if self._hwnd:
+                        _user32.PostMessageW(self._hwnd, _WM_APP_MESSAGE, 0, 0)
+                    last_len = next_len
+                if next_len >= len(text):
+                    break
+                time.sleep(interval)
             threading.Timer(seconds, self._hide_message, args=(token,)).start()
 
         threading.Thread(target=run, daemon=True, name="StatusTypingMessage").start()
@@ -210,7 +281,7 @@ class StatusWindow:
             try:
                 fn()
             except Exception as e:
-                print(f"[status] 主线程初始化失败: {e}")
+                print(f"[status] main thread initialization failed: {e}")
 
         msg = wintypes.MSG()
         while _user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
@@ -270,7 +341,7 @@ class StatusWindow:
     def _apply(self, state: str) -> None:
         if not self._hwnd:
             return
-        info = _STATES.get(state)
+        info = _state_info(state)
         if info is None or state == "idle":
             self._state = "idle"
             self._width_text = ""
@@ -289,14 +360,18 @@ class StatusWindow:
     def _apply_message(self, text: str, token: int, width_text: str | None = None) -> None:
         if not self._hwnd or token != self._message_token:
             return
+        was_message = self._state == "message"
+        previous_width_text = self._width_text
+        next_width_text = width_text or text
         self._state = "message"
         self._text = text
-        self._width_text = width_text or text
+        self._width_text = next_width_text
         self._color = 0xF6823B
         _user32.KillTimer(self._hwnd, _TIMER_HIDE)
-        self._position()
+        if not was_message or next_width_text != previous_width_text:
+            self._position()
         _user32.ShowWindow(self._hwnd, 8)
-        _user32.InvalidateRect(self._hwnd, None, True)
+        _user32.InvalidateRect(self._hwnd, None, False)
 
     def _hide_message_now(self, token: int) -> None:
         if not self._hwnd or token != self._message_token or self._state != "message":
