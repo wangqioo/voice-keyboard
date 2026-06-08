@@ -24,6 +24,7 @@ from agent.memo_store import MemoStore
 from agent.runtime_composition import RuntimeOptions, build_runtime_backend
 from agent.status_window_win import StatusWindow
 from agent.text_buffer import TextBuffer
+from agent.windows_main_window import WindowsMainWindow
 
 
 _USER_DIR = Path.home() / ".voice-keyboard"
@@ -49,6 +50,12 @@ class WindowsTrayApp:
         self._buf = TextBuffer()
         self._history = History()
         self._icon: pystray.Icon | None = None
+        self._main_window = WindowsMainWindow(
+            history=self._history,
+            insert_text=self._insert_text_after_menu_closes,
+            reload_config=self._reload_backend_now,
+            notify=self._notify_text,
+        )
 
     def run(self) -> None:
         ensure_user_config()
@@ -69,6 +76,7 @@ class WindowsTrayApp:
         return pystray.Menu(
             pystray.MenuItem(labels["running"], lambda: None, enabled=False),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem(labels["open_main_window"], self._open_main_window, default=True),
             pystray.MenuItem(labels["open_config"], self._open_config),
             pystray.MenuItem(labels["open_config_dir"], self._open_config_dir),
             pystray.MenuItem(labels["list_devices"], self._show_devices),
@@ -95,6 +103,7 @@ class WindowsTrayApp:
         if self._language() == "en":
             return {
                 "running": "Voice Keyboard is running",
+                "open_main_window": "Open Main Window",
                 "open_config": "Open Config",
                 "open_config_dir": "Open Config Folder",
                 "list_devices": "List Microphones",
@@ -120,6 +129,7 @@ class WindowsTrayApp:
             }
         return {
             "running": "Voice Keyboard \u6b63\u5728\u8fd0\u884c",
+            "open_main_window": "\u6253\u5f00\u4e3b\u7a97\u53e3",
             "open_config": "\u6253\u5f00\u914d\u7f6e",
             "open_config_dir": "\u6253\u5f00\u914d\u7f6e\u76ee\u5f55",
             "list_devices": "\u5217\u51fa\u9ea6\u514b\u98ce\u8bbe\u5907",
@@ -164,6 +174,10 @@ class WindowsTrayApp:
     def _notify(self, key: str, **values) -> None:
         if hasattr(self._status, "show_message"):
             self._status.show_message(self._message(key, **values), 2.5)
+
+    def _notify_text(self, message: str) -> None:
+        if hasattr(self._status, "show_message"):
+            self._status.show_message(message, 2.5)
 
     def _hotkey_display_name(self, key_name: str) -> str:
         labels = self._labels()
@@ -358,8 +372,12 @@ class WindowsTrayApp:
                 self._backend.stop()
                 self._backend = None
         self._status.stop()
+        self._main_window.stop()
         if icon is not None:
             icon.stop()
+
+    def _open_main_window(self, _icon=None, _item=None):
+        self._main_window.show()
 
     def _open_config(self, _icon=None, _item=None):
         _USER_DIR.mkdir(parents=True, exist_ok=True)

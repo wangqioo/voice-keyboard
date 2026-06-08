@@ -15,6 +15,7 @@ a = Analysis(
     hiddenimports=[
         "agent.status_window_win",
         "agent.windows_tray",
+        "agent.windows_main_window",
         "agent.main",
         "agent.stt",
         "agent.llm_editor",
