@@ -13,12 +13,20 @@ from tkinter import messagebox, ttk
 import yaml
 
 from agent.history import History
-from agent.intent_training import load_samples, update_sample_review
+from agent.intent_diagnostics import format_evaluation_mismatches, save_diagnostics_review, summarize_diagnostics
+from agent.intent_evaluation import evaluate_reviewed_samples
+from agent.intent_loop import run_training_loop
+from agent.intent_model_ui import get_model_status, rollback_model_for_ui, train_local_model_for_ui
+from agent.intent_sync import sync_local_corrected_intents
+from agent.intent_training import load_samples
 from agent.memo_store import MemoStore
 
 
 _USER_DIR = Path.home() / ".voice-keyboard"
 _CONFIG = _USER_DIR / "config.yaml"
+_INTENT_OVERRIDES = _USER_DIR / "intent_overrides.jsonl"
+_INTENT_MODEL_REGISTRY = _USER_DIR / "intent_models"
+_INTENT_MODEL_REPORTS = _USER_DIR / "intent_eval_reports"
 _HOTKEY_OPTIONS = [
     ("shift_r", "Right Shift", "\u53f3 Shift"),
     ("alt_r", "Right Alt", "\u53f3 Alt"),
@@ -28,6 +36,62 @@ _HOTKEY_OPTIONS = [
     ("f9", "F9", "F9"),
     ("f10", "F10", "F10"),
 ]
+_CORRECTED_INTENT_TYPES = (
+    "",
+    "shortcut",
+    "undo",
+    "delete",
+    "edit",
+    "write",
+    "memo_save",
+    "memo_recall",
+    "memo_delete",
+    "memo_list",
+    "chat",
+)
+
+
+_REVIEW_LABEL_DISPLAY = {
+    "": "未标记",
+    "correct": "判断正确",
+    "wrong_intent": "操作类型错了",
+    "wrong_target": "操作对象错了",
+    "unsafe_should_confirm": "应该先确认",
+    "missing_shortcut": "缺少快捷键",
+    "unclear": "说法不清楚",
+}
+_REVIEW_DISPLAY_TO_LABEL = {label: value for value, label in _REVIEW_LABEL_DISPLAY.items()}
+_INTENT_TYPE_DISPLAY = {
+    "": "不填写纠正",
+    "shortcut": "执行快捷键/菜单操作",
+    "undo": "撤销",
+    "delete": "删除文字",
+    "edit": "编辑文字",
+    "write": "输入文字",
+    "memo_save": "保存到记忆库",
+    "memo_recall": "读取记忆库",
+    "memo_delete": "删除记忆",
+    "memo_list": "列出记忆",
+    "chat": "只聊天回答",
+}
+_INTENT_DISPLAY_TO_TYPE = {label: value for value, label in _INTENT_TYPE_DISPLAY.items()}
+
+def build_corrected_intent(intent_type: str, value: str = "", extra: str = "") -> dict | None:
+    intent_type = str(intent_type or "").strip()
+    if not intent_type:
+        return None
+    value = str(value or "").strip()
+    extra = str(extra or "").strip()
+    out = {"type": intent_type}
+    if intent_type == "shortcut":
+        out["name"] = value
+    elif intent_type in {"memo_save", "memo_recall", "memo_delete"}:
+        out["key"] = value
+        if intent_type == "memo_save" and extra:
+            out["value"] = extra
+    elif intent_type == "chat":
+        out["reply"] = value
+    return out
 
 
 def _read_config() -> dict:
@@ -51,6 +115,33 @@ def _language() -> str:
     ui = (_read_config().get("ui") or {})
     return "en" if str(ui.get("language", "zh")).lower().startswith("en") else "zh"
 
+
+
+def intent_training_server_config() -> dict:
+    training = ((_read_config().get("instruction_mode") or {}).get("intent_training") or {})
+    return {
+        "server": str(training.get("server") or os.getenv("INTENT_TRAINING_SERVER", "")).strip(),
+        "token": str(training.get("token") or os.getenv("INTENT_TRAINING_UPLOAD_TOKEN", "")).strip(),
+    }
+
+
+def save_intent_training_server_config(server: str, token: str) -> None:
+    cfg = _read_config()
+    training = cfg.setdefault("instruction_mode", {}).setdefault("intent_training", {})
+    training["server"] = str(server or "").strip()
+    training["token"] = str(token or "").strip()
+    _write_config(cfg)
+
+
+def format_sync_evaluation_message(*, sync: dict, evaluation: dict, remote: bool = False, upload: dict | None = None) -> str:
+    prefix = "Remote sync" if remote else "Local sync"
+    inserted = f" inserted={(upload or {}).get('inserted', 0)}" if remote else ""
+    return (
+        f"{prefix} complete{inserted} synced={sync.get('synced', 0)} "
+        f"skipped={sync.get('skipped', 0)} compacted={sync.get('compacted', 0)} "
+        f"accuracy={evaluation.get('accuracy_label', '0.0%')} "
+        f"wrong={evaluation.get('wrong', 0)} total={evaluation.get('total', 0)}"
+    )
 
 class WindowsMainWindow:
     def __init__(self, *, history: History, insert_text, reload_config, notify):
@@ -80,9 +171,10 @@ class WindowsMainWindow:
     def _run(self) -> None:
         self._root = tk.Tk()
         self._root.title("Voice Keyboard")
-        self._root.geometry("920x620")
-        self._root.minsize(820, 520)
+        self._root.geometry("1180x760")
+        self._root.minsize(980, 640)
         self._root.protocol("WM_DELETE_WINDOW", self._hide)
+        self._configure_style()
         self._build()
         self._poll_queue()
         self._root.mainloop()
@@ -118,11 +210,24 @@ class WindowsMainWindow:
     def _t(self, zh: str, en: str) -> str:
         return en if _language() == "en" else zh
 
+    def _configure_style(self) -> None:
+        style = ttk.Style(self._root)
+        for theme in ("vista", "xpnative", "winnative"):
+            if theme in style.theme_names():
+                try:
+                    style.theme_use(theme)
+                    break
+                except tk.TclError:
+                    pass
+        style.configure("TNotebook", tabmargins=(6, 6, 6, 0))
+        style.configure("TNotebook.Tab", padding=(16, 8), font=("Segoe UI", 10))
+        style.map("TNotebook.Tab", font=[("selected", ("Segoe UI", 10, "bold"))])
+
     def _build(self) -> None:
         root = self._root
         if root is None:
             return
-        outer = ttk.Frame(root, padding=10)
+        outer = ttk.Frame(root, padding=(12, 10, 12, 12))
         outer.pack(fill="both", expand=True)
         self._tabs = ttk.Notebook(outer)
         self._tabs.pack(fill="both", expand=True)
@@ -136,7 +241,7 @@ class WindowsMainWindow:
         self.refresh_all()
 
     def _tab(self, zh: str, en: str) -> ttk.Frame:
-        frame = ttk.Frame(self._tabs, padding=12)
+        frame = ttk.Frame(self._tabs, padding=(14, 16, 14, 14))
         self._tabs.add(frame, text=self._t(zh, en))
         return frame
 
@@ -155,7 +260,7 @@ class WindowsMainWindow:
         toolbar = ttk.Frame(tab)
         toolbar.pack(fill="x")
         self._history_search = tk.StringVar()
-        ttk.Label(toolbar, text=self._t("\u641c\u7d22", "Search")).pack(side="left")
+        ttk.Label(toolbar, text=self._t("\u641c\u7d22\u8bf4\u8fc7\u7684\u8bdd", "Search text")).pack(side="left")
         ttk.Entry(toolbar, textvariable=self._history_search, width=28).pack(side="left", padx=6)
         ttk.Button(toolbar, text=self._t("\u5237\u65b0", "Refresh"), command=self._refresh_history).pack(side="left")
         ttk.Button(toolbar, text=self._t("\u590d\u5236", "Copy"), command=self._copy_history).pack(side="left", padx=4)
@@ -171,56 +276,137 @@ class WindowsMainWindow:
         self._history_tree.bind("<Double-1>", lambda _event: self._insert_history())
 
     def _build_intent_diagnostics_tab(self) -> None:
-        tab = self._tab("\u610f\u56fe\u8bca\u65ad", "Intent Diagnostics")
-        top = ttk.Frame(tab)
-        top.pack(fill="x")
+        tab = self._tab("AI \u6307\u4ee4\u7ea0\u9519", "AI Command Review")
+        tab.columnconfigure(0, weight=1)
+        tab.rowconfigure(4, weight=1)
+
+        filters = ttk.LabelFrame(tab, text=self._t("\u67e5\u627e\u8bb0\u5f55", "Find Records"), padding=(10, 8))
+        filters.grid(row=0, column=0, sticky="ew")
+        filters.columnconfigure(1, weight=1)
         self._intent_search = tk.StringVar()
-        ttk.Label(top, text=self._t("\u641c\u7d22", "Search")).pack(side="left")
-        ttk.Entry(top, textvariable=self._intent_search, width=28).pack(side="left", padx=6)
-        ttk.Button(top, text=self._t("\u5237\u65b0", "Refresh"), command=self._refresh_intent_samples).pack(side="left")
-        ttk.Button(top, text=self._t("\u6253\u5f00\u6587\u4ef6", "Open File"), command=self._open_intent_samples_file).pack(side="right")
+        ttk.Label(filters, text=self._t("\u641c\u7d22\u8bf4\u8fc7\u7684\u8bdd", "Search text")).grid(row=0, column=0, sticky="w")
+        ttk.Entry(filters, textvariable=self._intent_search).grid(row=0, column=1, sticky="ew", padx=(6, 14))
+        self._intent_type_filter = tk.StringVar()
+        ttk.Label(filters, text=self._t("\u7cfb\u7edf\u5224\u65ad\u4e3a", "Detected as")).grid(row=0, column=2, sticky="w")
+        ttk.Combobox(
+            filters,
+            textvariable=self._intent_type_filter,
+            values=("", "shortcut", "delete", "chat", "memo_save", "memo_recall", "edit", "write"),
+            width=16,
+        ).grid(row=0, column=3, sticky="w", padx=(6, 14))
+        self._intent_review_filter = tk.StringVar(value="all")
+        ttk.Label(filters, text=self._t("\u662f\u5426\u770b\u8fc7", "Review status")).grid(row=0, column=4, sticky="w")
+        ttk.Combobox(
+            filters,
+            textvariable=self._intent_review_filter,
+            values=("all", "reviewed", "unreviewed"),
+            width=14,
+            state="readonly",
+        ).grid(row=0, column=5, sticky="w", padx=(6, 14))
+        ttk.Button(filters, text=self._t("\u5237\u65b0", "Refresh"), command=self._refresh_intent_samples).grid(row=0, column=6, sticky="e")
+        ttk.Button(filters, text=self._t("\u6253\u5f00\u6587\u4ef6", "Open File"), command=self._open_intent_samples_file).grid(row=0, column=7, sticky="e", padx=(6, 0))
+
+        actions = ttk.LabelFrame(tab, text=self._t("\u7ea0\u9519\u548c\u8bad\u7ec3", "Fix and Train"), padding=(10, 8))
+        actions.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        for col in range(8):
+            actions.columnconfigure(col, weight=1 if col in (4, 6) else 0)
+        ttk.Button(actions, text=self._t("\u66f4\u65b0\u7ea0\u9519\u5e76\u770b\u51c6\u786e\u7387", "Update fixes + accuracy"), command=self._sync_and_evaluate_intents).grid(row=0, column=0, sticky="w")
+        ttk.Button(actions, text=self._t("\u770b\u8fd8\u5224\u9519\u7684\u8bdd", "Show remaining mistakes"), command=self._show_intent_mismatches).grid(row=0, column=1, sticky="w", padx=(6, 0))
+        ttk.Button(actions, text=self._t("\u7528\u7ea0\u9519\u8bad\u7ec3", "Train from fixes"), command=self._train_intent_model).grid(row=0, column=2, sticky="w", padx=(14, 0))
+        ttk.Button(actions, text=self._t("\u64a4\u56de\u4e0a\u6b21\u8bad\u7ec3", "Undo last training"), command=self._rollback_intent_model).grid(row=0, column=3, sticky="w", padx=(6, 0))
+        ttk.Label(actions, text=self._t("\u8bad\u7ec3\u670d\u52a1\u5668", "Training server")).grid(row=0, column=4, sticky="e", padx=(14, 4))
+        self._intent_server = tk.StringVar()
+        ttk.Entry(actions, textvariable=self._intent_server).grid(row=0, column=5, sticky="ew")
+        ttk.Label(actions, text=self._t("\u5bc6\u94a5", "Token")).grid(row=0, column=6, sticky="e", padx=(8, 4))
+        self._intent_token = tk.StringVar()
+        ttk.Entry(actions, textvariable=self._intent_token, show="*").grid(row=0, column=7, sticky="ew")
+        ttk.Button(actions, text=self._t("\u4fdd\u5b58\u8bad\u7ec3\u670d\u52a1\u5668", "Save training server"), command=self._save_intent_server_config).grid(row=0, column=8, sticky="e", padx=(6, 0))
+
+        status = ttk.Frame(tab)
+        status.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        status.columnconfigure(0, weight=1)
+        self._intent_summary = tk.StringVar()
+        ttk.Label(status, textvariable=self._intent_summary, anchor="w").grid(row=0, column=0, sticky="ew")
+        self._intent_model_status = tk.StringVar()
+        ttk.Label(status, textvariable=self._intent_model_status, anchor="w").grid(row=1, column=0, sticky="ew", pady=(2, 0))
 
         body = ttk.PanedWindow(tab, orient="vertical")
-        body.pack(fill="both", expand=True, pady=(8, 0))
+        body.grid(row=4, column=0, sticky="nsew", pady=(8, 0))
 
         list_frame = ttk.Frame(body)
+        list_frame.columnconfigure(0, weight=1)
+        list_frame.rowconfigure(0, weight=1)
         body.add(list_frame, weight=3)
         cols = ("time", "type", "source", "confidence", "status", "review", "text")
-        self._intent_tree = ttk.Treeview(list_frame, columns=cols, show="headings", height=12)
+        self._intent_tree = ttk.Treeview(list_frame, columns=cols, show="headings", height=13)
         widths = (
-            ("time", 140), ("type", 90), ("source", 80), ("confidence", 90),
-            ("status", 80), ("review", 150), ("text", 420),
+            ("time", 150), ("type", 110), ("source", 95), ("confidence", 95),
+            ("status", 90), ("review", 150), ("text", 520),
         )
         for col, width in widths:
             self._intent_tree.heading(col, text=col)
-            self._intent_tree.column(col, width=width, anchor="w")
-        self._intent_tree.pack(fill="both", expand=True)
+            self._intent_tree.column(col, width=width, anchor="w", stretch=(col == "text"))
+        self._intent_tree.grid(row=0, column=0, sticky="nsew")
+        intent_scroll = ttk.Scrollbar(list_frame, orient="vertical", command=self._intent_tree.yview)
+        intent_scroll.grid(row=0, column=1, sticky="ns")
+        self._intent_tree.configure(yscrollcommand=intent_scroll.set)
         self._intent_tree.bind("<<TreeviewSelect>>", lambda _event: self._load_selected_intent_sample())
 
         detail = ttk.Frame(body)
+        detail.columnconfigure(0, weight=1)
+        detail.columnconfigure(1, weight=2)
+        detail.rowconfigure(1, weight=1)
         body.add(detail, weight=2)
-        form = ttk.Frame(detail)
-        form.pack(fill="x")
-        ttk.Label(form, text=self._t("\u6807\u7b7e", "Label")).grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
+
+        form = ttk.LabelFrame(detail, text=self._t("\u8fd9\u53e5\u8bdd\u5e94\u8be5\u600e\u4e48\u505a", "What should this command do?"), padding=(10, 8))
+        form.grid(row=0, column=0, columnspan=2, sticky="ew")
+        form.columnconfigure(1, weight=1)
+        form.columnconfigure(3, weight=1)
+        ttk.Label(form, text=self._t("\u5224\u65ad\u5bf9\u4e0d\u5bf9", "Was it right?")).grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
         self._intent_review_label = tk.StringVar()
         self._intent_review_box = ttk.Combobox(
             form,
             textvariable=self._intent_review_label,
-            values=("", "correct", "wrong_intent", "wrong_target", "unsafe_should_confirm", "missing_shortcut", "unclear"),
-            width=28,
+            values=tuple(_REVIEW_LABEL_DISPLAY.values()),
+            width=26,
             state="readonly",
         )
-        self._intent_review_box.grid(row=0, column=1, sticky="w", pady=4)
-        ttk.Button(form, text=self._t("\u4fdd\u5b58\u53cd\u9988", "Save Feedback"), command=self._save_intent_review).grid(row=0, column=2, sticky="w", padx=8, pady=4)
-        ttk.Button(form, text=self._t("\u590d\u5236\u6587\u672c", "Copy Text"), command=self._copy_intent_text).grid(row=0, column=3, sticky="w", pady=4)
+        self._intent_review_box.grid(row=0, column=1, sticky="ew", pady=4)
+        ttk.Label(form, text=self._t("\u6b63\u786e\u64cd\u4f5c\u7c7b\u578b", "Correct action type")).grid(row=0, column=2, sticky="w", padx=(14, 8), pady=4)
+        self._intent_corrected_type = tk.StringVar()
+        self._intent_corrected_box = ttk.Combobox(
+            form,
+            textvariable=self._intent_corrected_type,
+            values=tuple(_INTENT_TYPE_DISPLAY.values()),
+            width=22,
+            state="readonly",
+        )
+        self._intent_corrected_box.grid(row=0, column=3, sticky="ew", pady=4)
+        ttk.Label(form, text=self._t("\u64cd\u4f5c\u540d / \u8bb0\u5fc6\u540d / \u56de\u590d\u5185\u5bb9", "Action / memory / reply")).grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
+        self._intent_corrected_value = tk.StringVar()
+        ttk.Entry(form, textvariable=self._intent_corrected_value).grid(row=1, column=1, sticky="ew", pady=4)
+        ttk.Label(form, text=self._t("\u8981\u8bb0\u4f4f\u7684\u5185\u5bb9", "Memory value")).grid(row=1, column=2, sticky="w", padx=(14, 8), pady=4)
+        self._intent_corrected_extra = tk.StringVar()
+        ttk.Entry(form, textvariable=self._intent_corrected_extra).grid(row=1, column=3, sticky="ew", pady=4)
+        ttk.Button(form, text=self._t("\u4fdd\u5b58\u8fd9\u6761\u7ea0\u9519", "Save this fix"), command=self._save_intent_review).grid(row=0, column=4, sticky="ew", padx=(12, 0), pady=4)
+        ttk.Button(form, text=self._t("\u590d\u5236\u8fd9\u53e5\u8bdd", "Copy command"), command=self._copy_intent_text).grid(row=1, column=4, sticky="ew", padx=(12, 0), pady=4)
 
-        ttk.Label(detail, text=self._t("\u5907\u6ce8", "Note")).pack(anchor="w", pady=(6, 0))
-        self._intent_review_note = tk.Text(detail, height=3, wrap="word")
-        self._intent_review_note.pack(fill="x")
-        ttk.Label(detail, text=self._t("\u8be6\u60c5", "Details")).pack(anchor="w", pady=(6, 0))
-        self._intent_detail = tk.Text(detail, height=7, wrap="word")
-        self._intent_detail.pack(fill="both", expand=True)
+        note_frame = ttk.LabelFrame(detail, text=self._t("\u5907\u6ce8\uff08\u53ef\u9009\uff09", "Note (optional)"), padding=(8, 6))
+        note_frame.grid(row=1, column=0, sticky="nsew", pady=(8, 0), padx=(0, 6))
+        note_frame.columnconfigure(0, weight=1)
+        note_frame.rowconfigure(0, weight=1)
+        self._intent_review_note = tk.Text(note_frame, height=7, wrap="word")
+        self._intent_review_note.grid(row=0, column=0, sticky="nsew")
 
+        detail_frame = ttk.LabelFrame(detail, text=self._t("\u7cfb\u7edf\u5f53\u65f6\u600e\u4e48\u5224\u65ad", "How the system judged it"), padding=(8, 6))
+        detail_frame.grid(row=1, column=1, sticky="nsew", pady=(8, 0), padx=(6, 0))
+        detail_frame.columnconfigure(0, weight=1)
+        detail_frame.rowconfigure(0, weight=1)
+        self._intent_detail = tk.Text(detail_frame, height=7, wrap="word")
+        self._intent_detail.grid(row=0, column=0, sticky="nsew")
+        detail_scroll = ttk.Scrollbar(detail_frame, orient="vertical", command=self._intent_detail.yview)
+        detail_scroll.grid(row=0, column=1, sticky="ns")
+        self._intent_detail.configure(yscrollcommand=detail_scroll.set)
     def _build_memo_tab(self) -> None:
         tab = self._tab("\u8bb0\u5fc6\u5e93", "Memo Library")
         body = ttk.PanedWindow(tab, orient="horizontal")
@@ -295,6 +481,8 @@ class WindowsMainWindow:
         self._refresh_overview()
         self._refresh_history()
         self._refresh_intent_samples()
+        self._load_intent_server_fields()
+        self._refresh_intent_model_status()
         self._refresh_memo()
         self._load_config_fields()
         self._refresh_check()
@@ -351,14 +539,28 @@ class WindowsMainWindow:
         training = instruction.get("intent_training") or {}
         return Path(str(training.get("path") or (_USER_DIR / "intent_samples.jsonl"))).expanduser()
 
+    def _intent_overrides_path(self) -> Path:
+        cfg = _read_config()
+        instruction = cfg.get("instruction_mode") or {}
+        fallbacks = instruction.get("fallbacks") or {}
+        return Path(str(fallbacks.get("intent_overrides_path") or _INTENT_OVERRIDES)).expanduser()
+
     def _refresh_intent_samples(self) -> None:
         if not hasattr(self, "_intent_tree"):
             return
         path = self._intent_samples_path()
         query = self._intent_search.get().strip().lower() if hasattr(self, "_intent_search") else ""
+        intent_type = self._intent_type_filter.get().strip() if hasattr(self, "_intent_type_filter") else ""
+        review_filter = self._intent_review_filter.get().strip() if hasattr(self, "_intent_review_filter") else "all"
         rows = list(enumerate(load_samples(path, limit=0)))
         if query:
             rows = [item for item in rows if query in str(item[1].get("text") or "").lower()]
+        if intent_type:
+            rows = [item for item in rows if str(item[1].get("intent_type") or "") == intent_type]
+        if review_filter == "reviewed":
+            rows = [item for item in rows if str(item[1].get("review_label") or "")]
+        elif review_filter == "unreviewed":
+            rows = [item for item in rows if not str(item[1].get("review_label") or "")]
         self._intent_rows = list(reversed(rows[-300:]))
         self._intent_tree.delete(*self._intent_tree.get_children())
         for display_index, (_file_index, row) in enumerate(self._intent_rows):
@@ -374,7 +576,109 @@ class WindowsMainWindow:
                 row.get("review_label", ""),
                 text,
             ))
+        self._refresh_intent_summary()
         self._clear_intent_detail()
+
+    def _refresh_intent_summary(self) -> None:
+        if not hasattr(self, "_intent_summary"):
+            return
+        try:
+            summary = summarize_diagnostics(self._intent_samples_path(), override_path=self._intent_overrides_path())
+            evaluation = summary.get("evaluation", {}) or {}
+            wrong_by_intent = summary.get("wrong_by_intent", {}) or {}
+            wrong_text = ", ".join(f"{key}:{value}" for key, value in sorted(wrong_by_intent.items())) or "-"
+            self._intent_summary.set(
+                f"共 {summary.get('total', 0)} 条 / 已看过 {summary.get('reviewed', 0)} 条 / "
+                f"已纠正 {summary.get('corrected', 0)} 条 / 已生效 {summary.get('override_covered', 0)} 条 / "
+                f"回放准确率 {evaluation.get('accuracy_label', '0.0%')} / 还错 {evaluation.get('wrong', 0)} 条 / 错误分布 {wrong_text}"
+            )
+        except Exception as e:
+            self._intent_summary.set(f"Intent summary failed: {e}")
+
+    def _refresh_intent_model_status(self) -> None:
+        if not hasattr(self, "_intent_model_status"):
+            return
+        try:
+            status = get_model_status(_INTENT_MODEL_REGISTRY)
+            current = status.get("current_version") or "-"
+            self._intent_model_status.set(f"当前训练版本：{current} / 版本数：{status.get('version_count', 0)} / 评测报告：{_INTENT_MODEL_REPORTS}")
+        except Exception as e:
+            self._intent_model_status.set(f"Model status failed: {e}")
+
+    def _load_intent_server_fields(self) -> None:
+        if not hasattr(self, "_intent_server"):
+            return
+        cfg = intent_training_server_config()
+        self._intent_server.set(cfg["server"])
+        self._intent_token.set(cfg["token"])
+
+    def _save_intent_server_config(self) -> None:
+        save_intent_training_server_config(self._intent_server.get(), self._intent_token.get())
+        self._notify_text(self._t("\u8bad\u7ec3\u670d\u52a1\u5668\u5df2\u4fdd\u5b58", "Training server saved"))
+
+    def _run_intent_worker(self, label: str, target) -> None:
+        self._intent_summary.set(label)
+        def worker():
+            try:
+                message = target()
+            except Exception as e:
+                if self._root is not None:
+                    self._root.after(0, lambda: messagebox.showerror("Voice Keyboard", str(e)))
+                return
+            if self._root is not None:
+                self._root.after(0, lambda: self._intent_worker_finished(message))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _intent_worker_finished(self, message: str) -> None:
+        self._notify_text(message)
+        self._refresh_intent_samples()
+        self._refresh_intent_model_status()
+
+    def _sync_and_evaluate_intents(self) -> None:
+        def task():
+            cfg = intent_training_server_config()
+            if cfg["server"]:
+                import requests
+                report = run_training_loop(
+                    sample_path=self._intent_samples_path(),
+                    server=cfg["server"],
+                    token=cfg["token"],
+                    override_path=self._intent_overrides_path(),
+                    source="windows-ui",
+                    http=requests,
+                )
+                return format_sync_evaluation_message(sync=report["sync"], evaluation=report["evaluation"], remote=True, upload=report["upload"])
+            sync = sync_local_corrected_intents(self._intent_samples_path(), override_path=self._intent_overrides_path())
+            evaluation = evaluate_reviewed_samples(self._intent_samples_path(), override_path=self._intent_overrides_path())
+            return format_sync_evaluation_message(sync=sync, evaluation=evaluation)
+        self._run_intent_worker(self._t("\u6b63\u5728\u540c\u6b65\u5e76\u8bc4\u6d4b...", "Syncing and evaluating..."), task)
+
+    def _show_intent_mismatches(self) -> None:
+        try:
+            summary = summarize_diagnostics(self._intent_samples_path(), override_path=self._intent_overrides_path())
+            self._set_text(self._intent_detail, format_evaluation_mismatches(summary.get("evaluation", {})))
+        except Exception as e:
+            messagebox.showerror("Voice Keyboard", str(e))
+
+    def _train_intent_model(self) -> None:
+        def task():
+            result = train_local_model_for_ui(
+                sample_path=self._intent_samples_path(),
+                registry_dir=_INTENT_MODEL_REGISTRY,
+                report_dir=_INTENT_MODEL_REPORTS,
+                override_path=self._intent_overrides_path(),
+                min_similarity=0.8,
+            )
+            model = result["model"]
+            evaluation = result["evaluation"]["report"]
+            return f"Model trained version={model['version']} examples={model['examples']} accuracy={evaluation['accuracy_label']} report={result['evaluation']['path']}"
+        self._run_intent_worker(self._t("\u6b63\u5728\u8bad\u7ec3\u6a21\u578b...", "Training model..."), task)
+
+    def _rollback_intent_model(self) -> None:
+        def task():
+            result = rollback_model_for_ui(_INTENT_MODEL_REGISTRY)
+            return f"Model rolled back {result['previous_version']} -> {result['version']} examples={result['examples']}"
+        self._run_intent_worker(self._t("\u6b63\u5728\u56de\u6eda\u6a21\u578b...", "Rolling back model..."), task)
 
     def _selected_intent_row(self) -> tuple[int, dict] | None:
         selected = self._intent_tree.selection()
@@ -387,8 +691,9 @@ class WindowsMainWindow:
         if selected is None:
             return
         _file_index, row = selected
-        self._intent_review_label.set(str(row.get("review_label") or ""))
+        self._intent_review_label.set(_REVIEW_LABEL_DISPLAY.get(str(row.get("review_label") or ""), "未标记"))
         self._set_text(self._intent_review_note, str(row.get("review_note") or ""))
+        self._load_corrected_intent(row.get("corrected_intent") or {})
         detail_lines = [
             f"text: {row.get('text', '')}",
             f"type: {row.get('intent_type', '')}",
@@ -409,25 +714,49 @@ class WindowsMainWindow:
 
     def _clear_intent_detail(self) -> None:
         if hasattr(self, "_intent_review_label"):
-            self._intent_review_label.set("")
+            self._intent_review_label.set(_REVIEW_LABEL_DISPLAY[""])
         if hasattr(self, "_intent_review_note"):
             self._set_text(self._intent_review_note, "")
         if hasattr(self, "_intent_detail"):
             self._set_text(self._intent_detail, "")
 
+        if hasattr(self, "_intent_corrected_type"):
+            self._intent_corrected_type.set(_INTENT_TYPE_DISPLAY[""])
+        if hasattr(self, "_intent_corrected_value"):
+            self._intent_corrected_value.set("")
+        if hasattr(self, "_intent_corrected_extra"):
+            self._intent_corrected_extra.set("")
+
+    def _corrected_intent_from_fields(self) -> dict | None:
+        return build_corrected_intent(
+            _INTENT_DISPLAY_TO_TYPE.get(self._intent_corrected_type.get(), self._intent_corrected_type.get()),
+            self._intent_corrected_value.get(),
+            self._intent_corrected_extra.get(),
+        )
+
+    def _load_corrected_intent(self, corrected: dict) -> None:
+        intent_type = str(corrected.get("type") or "")
+        self._intent_corrected_type.set(_INTENT_TYPE_DISPLAY.get(intent_type, _INTENT_TYPE_DISPLAY[""]))
+        self._intent_corrected_value.set(str(corrected.get("name") or corrected.get("key") or corrected.get("reply") or ""))
+        self._intent_corrected_extra.set(str(corrected.get("value") or ""))
+
     def _save_intent_review(self) -> None:
         selected = self._selected_intent_row()
         if selected is None:
             return
-        file_index, _row = selected
+        file_index, row = selected
         path = self._intent_samples_path()
         note = self._intent_review_note.get("1.0", "end").strip()
+        row_with_index = dict(row)
+        row_with_index["source_index"] = file_index
         try:
-            update_sample_review(
+            save_diagnostics_review(
                 path,
-                file_index,
-                label=self._intent_review_label.get(),
+                row_with_index,
+                label=_REVIEW_DISPLAY_TO_LABEL.get(self._intent_review_label.get(), self._intent_review_label.get()),
                 note=note,
+                corrected_intent=self._corrected_intent_from_fields(),
+                override_path=self._intent_overrides_path(),
             )
         except Exception as e:
             messagebox.showerror("Voice Keyboard", str(e))
