@@ -25,6 +25,7 @@ class RuntimeBackend:
         self.reader = None
         self.audio = None
         self.input_environment = None
+        self.hotkeys = {}
 
     def stop(self):
         for attr in ("audio", "reader"):
@@ -76,6 +77,11 @@ def build_runtime_backend(
         history=history,
         input_environment=bk.input_environment,
     )
+    audio_cfg = bk.cfg.get("audio", {})
+    bk.hotkeys = {
+        "ptt_key": audio_cfg.get("ptt_key", "right_alt"),
+        "ai_key": audio_cfg.get("ai_key", default_ai_key()),
+    }
     return bk
 
 

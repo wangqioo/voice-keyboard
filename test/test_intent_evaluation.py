@@ -50,6 +50,18 @@ class IntentEvaluationTests(unittest.TestCase):
             self.assertEqual(report["total"], 1)
             self.assertEqual(report["correct"], 1)
 
+    def test_compare_evaluation_reports_shows_delta_and_regression(self):
+        from agent.intent_evaluation import compare_evaluation_reports
+
+        baseline = {"total": 10, "correct": 7, "wrong": 3, "accuracy": 0.7, "mismatches": [{"text": "a"}]}
+        model = {"total": 10, "correct": 8, "wrong": 2, "accuracy": 0.8, "mismatches": [{"text": "b"}]}
+
+        summary = compare_evaluation_reports(baseline, model)
+
+        self.assertEqual(summary["accuracy_delta"], 0.1)
+        self.assertEqual(summary["correct_delta"], 1)
+        self.assertEqual(summary["wrong_delta"], -1)
+        self.assertFalse(summary["regressed"])
     def test_build_evaluation_dataset_deduplicates_corrected_samples(self):
         from agent.intent_evaluation import build_evaluation_dataset
 

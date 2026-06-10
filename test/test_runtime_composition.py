@@ -50,6 +50,20 @@ class RuntimeCompositionTests(unittest.TestCase):
 
         self.assertIsNotNone(backend.input_environment)
 
+    def test_runtime_backend_records_active_hotkeys(self):
+        with (
+            patch("agent.runtime_composition.load_config", return_value={
+                "stt": {"provider": "openai", "api_key": "sk"},
+                "audio": {"ptt_key": "shift_r", "ai_key": "ctrl_r"},
+            }),
+            patch("agent.typer.init"),
+            patch("agent.runtime_composition.SpeechInterpretationProviderFactory") as factory_cls,
+        ):
+            factory_cls.return_value.create_provider_set.return_value = None
+            backend = build_runtime_backend(RuntimeOptions(no_serial=True), MagicMock(), None, MagicMock())
+
+        self.assertEqual(backend.hotkeys, {"ptt_key": "shift_r", "ai_key": "ctrl_r"})
+
     def test_build_audio_runtime_passes_intent_fallback_options_to_ai_handler(self):
         from agent.runtime_composition import build_audio_runtime
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.intent_evaluation import evaluate_reviewed_samples, write_evaluation_report
+from agent.intent_evaluation import compare_evaluation_reports, evaluate_reviewed_samples, write_evaluation_report
 from agent.intent_model import train_intent_model
 from agent.intent_sync import sync_corrected_intents
 
@@ -73,4 +73,17 @@ def run_training_loop(
                 intent_model_min_similarity=model_min_similarity,
                 version=model["version"],
             )
+            report["model_activation"] = _model_activation_decision(
+                baseline=evaluation,
+                candidate=report["model_evaluation"]["report"],
+            )
     return report
+
+def _model_activation_decision(*, baseline: dict, candidate: dict) -> dict:
+    comparison = compare_evaluation_reports(baseline, candidate)
+    should_activate = not comparison["regressed"]
+    return {
+        "should_activate": should_activate,
+        "reason": "candidate_ok" if should_activate else "candidate_regressed",
+        "comparison": comparison,
+    }

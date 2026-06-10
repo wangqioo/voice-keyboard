@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 from agent.ai_intent import (
     IntentContext,
     IntentFallbackOptions,
+    MemoTriggerConfig,
     ShortcutIntentEntry,
     classify_intent,
     classify_intent_details,
@@ -250,7 +251,7 @@ class AIIntentTests(unittest.TestCase):
 
         self.assertEqual(result, {"type": "delete"})
 
-    def test_chat_can_fuzzy_match_saved_memo_key(self):
+    def test_memo_lookup_requires_memory_wake_word(self):
         llm = MagicMock()
         llm.chat.return_value = '{"type":"chat","reply":"不知道"}'
 
@@ -259,7 +260,156 @@ class AIIntentTests(unittest.TestCase):
             memo_records=(self.memo_record("手机号"),),
         ))
 
+        self.assertEqual(result, {"type": "chat", "reply": "不知道"})
+
+    def test_chat_can_fuzzy_match_saved_memo_key_with_wake_word(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"chat","reply":"不知道"}'
+
+        result = classify_intent(llm, IntentContext(
+            text="查一下记忆里的手机号",
+            memo_records=(self.memo_record("手机号"),),
+        ))
+
         self.assertEqual(result, {"type": "memo_recall", "key": "手机号"})
+        llm.chat.assert_not_called()
+
+    def test_memo_lookup_action_does_not_require_memory_wake_word(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"chat","reply":"\u4e0d\u77e5\u9053"}'
+
+        result = classify_intent(llm, IntentContext(
+            text="\u67e5\u4e00\u4e0b\u6211\u7684\u624b\u673a\u53f7",
+            memo_records=(self.memo_record("\u624b\u673a\u53f7"),),
+        ))
+
+        self.assertEqual(result, {"type": "memo_recall", "key": "\u624b\u673a\u53f7"})
+        llm.chat.assert_not_called()
+
+    def test_memo_lookup_cleans_home_address_filler_words(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"chat","reply":"\u4e0d\u77e5\u9053"}'
+
+        result = classify_intent(llm, IntentContext(
+            text="\u67e5\u4e00\u4e0b\u6211\u5bb6\u5730\u5740",
+            memo_records=(self.memo_record("\u5730\u5740"),),
+        ))
+
+        self.assertEqual(result, {"type": "memo_recall", "key": "\u5730\u5740"})
+        llm.chat.assert_not_called()
+
+    def test_memo_lookup_supports_configured_action_without_wake_word(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"chat","reply":"\u4e0d\u77e5\u9053"}'
+
+        result = classify_intent(llm, IntentContext(
+            text="\u8c03\u51fa\u6211\u7684\u5730\u5740",
+            memo_records=(self.memo_record("\u5730\u5740"),),
+        ))
+
+        self.assertEqual(result, {"type": "memo_recall", "key": "\u5730\u5740"})
+        llm.chat.assert_not_called()
+
+    def test_exact_shortcut_takes_priority_over_memo_lookup_action(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"chat","reply":"\u4e0d\u77e5\u9053"}'
+
+        result = classify_intent(llm, IntentContext(
+            text="\u67e5\u627e",
+            shortcuts=("\u67e5\u627e",),
+        ))
+
+        self.assertEqual(result, {"type": "shortcut", "name": "\u67e5\u627e"})
+        llm.chat.assert_not_called()
+    def test_custom_memo_lookup_triggers_are_used(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"chat","reply":"no"}'
+        fallbacks = IntentFallbackOptions(
+            memo_triggers=MemoTriggerConfig(
+                save_words=("\u6536\u4e00\u4e0b",),
+                lookup_actions=("\u53d6\u4e00\u4e0b",),
+                wake_words=("\u8d44\u6599\u5e93",),
+                delete_words=("\u62b9\u6389\u8d44\u6599",),
+            )
+        )
+
+        result = classify_intent(
+            llm,
+            IntentContext(
+                text="\u53d6\u4e00\u4e0b\u8d44\u6599\u5e93\u91cc\u7684\u624b\u673a\u53f7",
+                memo_records=(self.memo_record("\u624b\u673a\u53f7"),),
+            ),
+            fallbacks,
+        )
+
+        self.assertEqual(result, {"type": "memo_recall", "key": "\u624b\u673a\u53f7"})
+        llm.chat.assert_not_called()
+
+    def test_memo_lookup_requires_query_action_word(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"chat","reply":"不知道"}'
+
+        result = classify_intent(llm, IntentContext(
+            text="记忆里的手机号是多少",
+            memo_records=(self.memo_record("手机号"),),
+        ))
+
+        self.assertEqual(result, {"type": "chat", "reply": "不知道"})
+
+    def test_memo_save_without_selection_prompts_for_selection(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"memo_save","key":"邮箱","value":"me@example.com"}'
+
+        result = classify_intent(llm, IntentContext(
+            text="帮我记住我的邮箱是me@example.com",
+        ))
+
+        self.assertEqual(result, {"type": "chat", "reply": "请先选中要记住的文本"})
+        llm.chat.assert_not_called()
+
+    def test_memo_save_selected_text_uses_llm_extracted_key(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"memo_save","key":"邮箱","value":""}'
+
+        result = classify_intent(llm, IntentContext(
+            text="记一下邮箱",
+            selected="me@example.com",
+        ))
+
+        self.assertEqual(result, {"type": "memo_save", "key": "邮箱", "value": ""})
+        llm.chat.assert_called_once()
+
+    def test_memo_save_selected_this_is_my_phone_key_uses_llm(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"memo_save","key":"手机号","value":""}'
+
+        result = classify_intent(llm, IntentContext(
+            text="记一下，这是我的手机号",
+            selected="15850752485",
+        ))
+
+        self.assertEqual(result, {"type": "memo_save", "key": "手机号", "value": ""})
+        llm.chat.assert_called_once()
+
+    def test_local_memo_list_does_not_call_llm(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"chat","reply":"不知道"}'
+
+        result = classify_intent(llm, IntentContext(text="看一下我的记忆库"))
+
+        self.assertEqual(result, {"type": "memo_list"})
+        llm.chat.assert_not_called()
+
+    def test_local_memo_delete_resolves_saved_key(self):
+        llm = MagicMock()
+        llm.chat.return_value = '{"type":"chat","reply":"不知道"}'
+
+        result = classify_intent(llm, IntentContext(
+            text="忘掉备忘里的邮箱",
+            memo_records=(self.memo_record("邮箱", "me@example.com"),),
+        ))
+
+        self.assertEqual(result, {"type": "memo_delete", "key": "邮箱"})
         llm.chat.assert_not_called()
 
     def test_memo_recall_from_llm_is_validated_against_request(self):
@@ -267,7 +417,7 @@ class AIIntentTests(unittest.TestCase):
         llm.chat.return_value = '{"type":"memo_recall","key":"儿子"}'
 
         result = classify_intent(llm, IntentContext(
-            text="我的手机号码是多少",
+            text="查一下记忆里的手机号码",
             memo_records=(
                 self.memo_record("儿子"),
                 self.memo_record("手机号"),
@@ -281,7 +431,7 @@ class AIIntentTests(unittest.TestCase):
         llm.chat.return_value = '{"type":"memo_recall","key":"儿子"}'
 
         result = classify_intent(llm, IntentContext(
-            text="我的手机号码是多少",
+            text="查一下记忆里的手机号码",
             memo_records=(self.memo_record("儿子"),),
         ))
 
@@ -305,7 +455,7 @@ class AIIntentTests(unittest.TestCase):
         result = classify_intent(
             llm,
             IntentContext(
-                text="我的手机号是多少",
+                text="查一下记忆里的手机号",
                 memo_records=(self.memo_record("手机号"),),
             ),
             IntentFallbackOptions(memo_fuzzy_recall=False),

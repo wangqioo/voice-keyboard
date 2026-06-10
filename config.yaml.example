@@ -169,8 +169,13 @@ instruction_mode:
     # 目标明确兜底：已有 Explicit Selection 且语音明显是翻译/润色/改写时，
     # 即使模型误判成写作/聊天，也按编辑当前选区处理。
     selected_edit_override: true
-    # 便利类兜底：仅在“我的 X 是什么 / 插入 X”等查询或插入句式下模糊匹配备忘。
+    # 备忘录触发词：保存必须先选中文本；查询必须包含查询动作词 + 记忆唤醒词。
     memo_fuzzy_recall: true
+    memo_triggers:
+      save_words: ["记住", "记一下", "记下", "备忘"]
+      lookup_actions: ["查一下", "查询", "查找", "找一下", "调出", "调取", "读取", "打开", "打出", "输入", "填入", "贴出"]
+      wake_words: ["记忆", "记忆库", "备忘", "备忘录", "我记住的", "我记下的", "之前记的", "上次记的", "保存过的", "存过的"]
+      delete_words: ["忘记", "忘掉", "删除备忘", "删掉备忘", "删除记忆", "删掉记忆", "不要记"]
     # 本地修正覆盖：意图诊断里保存的“修正”会先于模型生效。
     intent_overrides: true
     intent_overrides_path: ~/.voice-keyboard/intent_overrides.jsonl

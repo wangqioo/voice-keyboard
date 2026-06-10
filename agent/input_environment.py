@@ -173,7 +173,10 @@ class TyperInputEnvironment:
                 plan.replacement_text,
                 1,
             )
-            self.replace_selection(window.text, replacement)
+            if replacement:
+                self.replace_selection(window.text, replacement)
+            else:
+                self.delete_selection(window.text)
             return TargetChangeResult.changed(window.text, replacement)
 
         if window.source in {"caret", "tracked_segment"}:

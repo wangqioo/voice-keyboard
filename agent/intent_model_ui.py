@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -19,6 +20,23 @@ def get_model_status(registry_dir: Path | str) -> dict:
         "version_count": len(versions),
         "versions": versions,
     }
+
+
+def get_latest_model_report_summary(report_dir: Path | str) -> dict:
+    reports = Path(report_dir).expanduser()
+    if not reports.exists():
+        return {}
+    files = [path for path in reports.glob("*.json") if path.is_file()]
+    if not files:
+        return {}
+    latest = max(files, key=lambda path: path.stat().st_mtime)
+    try:
+        data = json.loads(latest.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {**data, "path": str(latest)}
 
 
 def train_local_model_for_ui(

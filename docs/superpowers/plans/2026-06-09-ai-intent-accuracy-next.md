@@ -53,7 +53,7 @@ Do not re-implement these. Build on them.
 - Modify: `agent/intent_evaluation.py`
 - Test: `test/test_intent_evaluation.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add a test that creates two report dicts and expects a comparison summary:
 
@@ -72,7 +72,7 @@ def test_compare_evaluation_reports_shows_delta_and_regression():
     self.assertFalse(summary["regressed"])
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -82,7 +82,7 @@ Run:
 
 Expected: fails because `compare_evaluation_reports` does not exist.
 
-- [ ] **Step 3: Implement minimal comparison helper**
+- [x] **Step 3: Implement minimal comparison helper**
 
 Add:
 
@@ -106,7 +106,7 @@ def compare_evaluation_reports(baseline: Mapping, candidate: Mapping) -> dict:
     }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run the same unittest command. Expected: PASS.
 
@@ -123,7 +123,7 @@ git commit -m "Compare intent evaluation reports"
 - Modify: `agent/intent_loop.py`
 - Test: `test/test_intent_loop.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add a test proving a candidate model report lower than baseline marks activation unsafe:
 
@@ -140,7 +140,7 @@ def test_run_training_loop_marks_regressed_model_activation_unsafe(self):
     self.assertEqual(decision["reason"], "candidate_regressed")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 ```bash
 .venv/bin/python -m unittest discover -s test -p 'test_intent_loop.py' -v
@@ -148,7 +148,7 @@ def test_run_training_loop_marks_regressed_model_activation_unsafe(self):
 
 Expected: fails because `_model_activation_decision` does not exist.
 
-- [ ] **Step 3: Implement minimal decision helper**
+- [x] **Step 3: Implement minimal decision helper**
 
 Use `compare_evaluation_reports`:
 
@@ -165,7 +165,7 @@ def _model_activation_decision(*, baseline: dict, candidate: dict) -> dict:
 
 Keep the first version report-only. Do not automatically undo already-activated `current.json` in this task.
 
-- [ ] **Step 4: Include decision in loop result**
+- [x] **Step 4: Include decision in loop result**
 
 When `run_training_loop` writes `model_evaluation`, add:
 
@@ -176,7 +176,7 @@ report["model_activation"] = _model_activation_decision(
 )
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 ```bash
 .venv/bin/python -m unittest discover -s test -p 'test_intent_loop.py' -v
@@ -198,7 +198,7 @@ git commit -m "Add intent model activation guard"
 - Modify: `agent/ui/main_window.py`
 - Test: `test/test_intent_model_ui.py`
 
-- [ ] **Step 1: Write failing helper test**
+- [x] **Step 1: Write failing helper test**
 
 ```python
 def test_get_latest_model_report_summary_reads_newest_report(self):
@@ -215,17 +215,17 @@ def test_get_latest_model_report_summary_reads_newest_report(self):
         self.assertEqual(summary["wrong"], 0)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 ```bash
 .venv/bin/python -m unittest discover -s test -p 'test_intent_model_ui.py' -v
 ```
 
-- [ ] **Step 3: Implement helper**
+- [x] **Step 3: Implement helper**
 
 Sort report files by `stat().st_mtime`, parse newest JSON, and return `{}` if none exists.
 
-- [ ] **Step 4: Update Mac UI label**
+- [x] **Step 4: Update Mac UI label**
 
 In `_IntentDiagnosticsTab._refresh_model_status`, append latest report accuracy:
 
@@ -235,7 +235,7 @@ if report:
     text += f" / 最近评测 {report.get('accuracy_label', '-')} 错例 {report.get('wrong', 0)}"
 ```
 
-- [ ] **Step 5: Run tests and compile**
+- [x] **Step 5: Run tests and compile**
 
 ```bash
 .venv/bin/python -m unittest discover -s test -p 'test_intent_model_ui.py' -v
@@ -255,7 +255,7 @@ git commit -m "Show latest intent model report in Mac UI"
 - Modify: `training_server/review_page.py`
 - Test: `test/test_training_server_review_page.py`
 
-- [ ] **Step 1: Add failing test**
+- [x] **Step 1: Add failing test**
 
 In the existing review page test, assert the HTML includes:
 
@@ -265,17 +265,17 @@ self.assertIn("Model Reports", html)
 self.assertIn("Sync Status", html)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 ```bash
 .venv/bin/python -m unittest discover -s test -p 'test_training_server_review_page.py' -v
 ```
 
-- [ ] **Step 3: Add minimal links/sections**
+- [x] **Step 3: Add minimal links/sections**
 
 Add static UI affordances first. Do not implement full server endpoints in this task unless the failing test requires it.
 
-- [ ] **Step 4: Run test**
+- [x] **Step 4: Run test**
 
 ```bash
 .venv/bin/python -m unittest discover -s test -p 'test_training_server_review_page.py' -v
@@ -294,7 +294,7 @@ git commit -m "Add review page model report links"
 - Modify: `docs/stage-development-plan.md`
 - Possibly modify: `docs/intent-training.md`
 
-- [ ] **Step 1: Run targeted tests**
+- [x] **Step 1: Run targeted tests**
 
 ```bash
 .venv/bin/python -m unittest discover -s test -p 'test_intent_evaluation.py' -v
@@ -305,7 +305,7 @@ git commit -m "Add review page model report links"
 
 Expected: all PASS.
 
-- [ ] **Step 2: Run compile and diff check**
+- [x] **Step 2: Run compile and diff check**
 
 ```bash
 .venv/bin/python -m compileall agent tools training_server
@@ -322,7 +322,7 @@ scripts/test-local.sh
 
 Expected: all tests PASS; `test_typing.py` remains skipped unless `--include-typing` is passed.
 
-- [ ] **Step 4: Update docs**
+- [x] **Step 4: Update docs**
 
 Record the completed tasks, latest commits, and remaining risks in `docs/stage-development-plan.md`.
 

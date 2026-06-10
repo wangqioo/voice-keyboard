@@ -120,6 +120,24 @@ def write_evaluation_report(
     }
 
 
+def compare_evaluation_reports(baseline: Mapping, candidate: Mapping) -> dict:
+    baseline_accuracy = float(baseline.get("accuracy") or 0.0)
+    candidate_accuracy = float(candidate.get("accuracy") or 0.0)
+    baseline_correct = int(baseline.get("correct") or 0)
+    candidate_correct = int(candidate.get("correct") or 0)
+    baseline_wrong = int(baseline.get("wrong") or 0)
+    candidate_wrong = int(candidate.get("wrong") or 0)
+    return {
+        "baseline_accuracy": baseline_accuracy,
+        "candidate_accuracy": candidate_accuracy,
+        "accuracy_delta": round(candidate_accuracy - baseline_accuracy, 6),
+        "correct_delta": candidate_correct - baseline_correct,
+        "wrong_delta": candidate_wrong - baseline_wrong,
+        "baseline_mismatches": len(baseline.get("mismatches") or []),
+        "candidate_mismatches": len(candidate.get("mismatches") or []),
+        "regressed": candidate_accuracy < baseline_accuracy or candidate_wrong > baseline_wrong,
+    }
+
 def _classify_case(
     case: dict,
     *,

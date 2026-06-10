@@ -1,4 +1,4 @@
-"""
+﻿"""
 macOS 原生悬浮状态窗口，HUD 风格：毛玻璃背景 + 彩色状态点 + 文字。
 屏幕底部居中。必须在主线程调用 run()，其他线程通过 set_state() 安全更新。
 """
@@ -53,11 +53,15 @@ _ERROR_STATES = {
 
 _BOTTOM_MARGIN = 96
 _HEIGHT        = 36
+_AI_HEIGHT     = 58
 _PAD_LEFT      = 14
 _PAD_RIGHT     = 16
 _DOT_SIZE      = 8
 _DOT_GAP       = 9
 _FONT_SIZE     = 13
+_AI_PROGRESS_RGB = (0.27, 0.62, 0.94)
+_AI_DONE_RGB     = (0.20, 0.78, 0.50)
+_AI_ERROR_RGB    = (0.94, 0.20, 0.20)
 
 
 class _DotView(NSView):
@@ -91,6 +95,9 @@ class _Controller(NSObject):
         self._state_token = 0
         self._message_token = 0
         self._message_width_text = ""
+        self._ai_heard = ""
+        self._ai_stage = ""
+        self._ai_kind = "progress"
         self._build()
         return self
 
@@ -180,6 +187,9 @@ class _Controller(NSObject):
                     _, text, token, *rest = item
                     width_text = rest[0] if rest else text
                     self._apply_message(text, token, width_text)
+                elif isinstance(item, tuple) and item and item[0] == "ai_message":
+                    _, heard, stage, token, kind = item
+                    self._apply_ai_message(heard, stage, token, kind)
                 elif isinstance(item, tuple) and item and item[0] == "hide_message":
                     _, token = item
                     self._hide_message_now(token)
@@ -199,6 +209,8 @@ class _Controller(NSObject):
         if info is None or state == "idle":
             self._state = "idle"
             self._message_width_text = ""
+            self._ai_heard = ""
+            self._ai_stage = ""
             self._panel.orderOut_(None)
             return
         text, rgb = info
@@ -213,7 +225,7 @@ class _Controller(NSObject):
             )
 
     @objc.python_method
-    def _layout(self, text: str, rgb, width_text: str):
+    def _layout(self, text: str, rgb, width_text: str, height: int = _HEIGHT):
         self._label.setStringValue_(width_text)
         self._label.sizeToFit()
         text_w = self._label.frame().size.width
@@ -223,7 +235,7 @@ class _Controller(NSObject):
         label_w = self._label.frame().size.width
         text_h = self._label.frame().size.height
 
-        h = _HEIGHT
+        h = height
         w = _PAD_LEFT + _DOT_SIZE + _DOT_GAP + text_w + _PAD_RIGHT
 
         screen = NSScreen.mainScreen() or NSScreen.screens()[0]
@@ -257,19 +269,43 @@ class _Controller(NSObject):
         self._layout(text, (0.27, 0.62, 0.94), self._message_width_text)
 
     @objc.python_method
+    def _apply_ai_message(self, heard: str, stage: str, token: int, kind: str):
+        if self._panel is None or token != self._message_token:
+            return
+        self._message_token = token
+        self._state = "ai_message"
+        self._message_width_text = ""
+        self._ai_heard = str(heard or "")
+        self._ai_stage = str(stage or "")
+        self._ai_kind = kind if kind in {"progress", "done", "error"} else "done"
+        rgb = {
+            "progress": _AI_PROGRESS_RGB,
+            "done": _AI_DONE_RGB,
+            "error": _AI_ERROR_RGB,
+        }.get(self._ai_kind, _AI_DONE_RGB)
+        heard_text = f"我听到：{self._ai_heard}"
+        width_text = heard_text if len(heard_text) >= len(self._ai_stage) else self._ai_stage
+        text = f"{heard_text}\n{self._ai_stage}"
+        self._layout(text, rgb, width_text, _AI_HEIGHT)
+
+    @objc.python_method
     def _hide_message_now(self, token: int):
-        if self._panel is None or token != self._message_token or self._state != "message":
+        if (
+            self._panel is None
+            or token != self._message_token
+            or self._state not in {"message", "ai_message"}
+        ):
             return
         self._state = "idle"
         self._message_width_text = ""
+        self._ai_heard = ""
+        self._ai_stage = ""
         self._panel.orderOut_(None)
 
     def hide_(self, timer):
         token = timer.userInfo()
         if self._panel is not None and token == self._state_token:
-            self._state = "idle"
-            self._message_width_text = ""
-            self._panel.orderOut_(None)
+            self._apply("idle")
 
 
 class StatusWindow:
@@ -287,6 +323,23 @@ class StatusWindow:
         self._message_token += 1
         token = self._message_token
         self._q.put(("message", text, token))
+        threading.Timer(seconds, self._hide_message, args=(token,)).start()
+
+    def show_ai_progress(self, heard: str, progress: str) -> None:
+        self._message_token += 1
+        token = self._message_token
+        self._q.put(("ai_message", heard, progress, token, "progress"))
+
+    def show_ai_result(
+        self,
+        heard: str,
+        result: str,
+        seconds: float = 6.0,
+        kind: str = "done",
+    ) -> None:
+        self._message_token += 1
+        token = self._message_token
+        self._q.put(("ai_message", heard, result, token, kind))
         threading.Timer(seconds, self._hide_message, args=(token,)).start()
 
     def show_typing_message(self, text: str, seconds: float = 6.0, interval: float = 0.006) -> None:

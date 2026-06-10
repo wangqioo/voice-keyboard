@@ -1,6 +1,8 @@
 import os
+import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -12,6 +14,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class RunLocalScriptTests(unittest.TestCase):
     def test_kill_only_matcher_accepts_homebrew_python_app_process(self):
+        script = ROOT / "scripts" / "run-local.sh"
+        command = [str(script), "--kill-only"]
+        if sys.platform == "win32":
+            bash = shutil.which("bash")
+            if bash is None:
+                self.skipTest("bash is required to run scripts/run-local.sh on Windows")
+            command = [bash, str(script), "--kill-only"]
+
         with tempfile.TemporaryDirectory() as tmp:
             bin_dir = Path(tmp) / "bin"
             bin_dir.mkdir()
@@ -32,7 +42,7 @@ class RunLocalScriptTests(unittest.TestCase):
             env = os.environ.copy()
             env["PATH"] = f"{bin_dir}:{env['PATH']}"
             result = subprocess.run(
-                [str(ROOT / "scripts" / "run-local.sh"), "--kill-only"],
+                command,
                 cwd=ROOT,
                 env=env,
                 text=True,

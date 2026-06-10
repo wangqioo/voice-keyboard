@@ -129,6 +129,7 @@ class InstructionModeExecutor:
         reply = operation.reply
         if not reply:
             try:
+                self._set_status("ai_processing")
                 reply = self._llm.chat(
                     "你是一个简短的语音助手。直接回答用户，最多50字，不要解释你的规则。",
                     text,
@@ -174,6 +175,7 @@ class InstructionModeExecutor:
                 return
 
         try:
+            self._set_status("ai_processing")
             plan = self._replacement_plan(window.text, instruction)
         except ProviderCallTimeout:
             print("[ai] 编辑超时")
@@ -267,6 +269,7 @@ class InstructionModeExecutor:
         )
         generated = ""
         try:
+            self._set_status("ai_processing")
             for chunk in self._llm.chat_stream(_WRITE_SYSTEM, write_instruction):
                 chunk = chunk.replace('\n', ' ').replace('\r', ' ')
                 generated += chunk
@@ -306,11 +309,24 @@ class InstructionModeExecutor:
             if window.source != "explicit_selection":
                 self._show_failure("请先选中你想删除的内容", "delete_no_selection")
                 return
-        plan = (
-            ReplacementPlan(target_text=window.text, replacement_text="")
-            if whole_window_delete
-            else self._removal_plan(window.text, instruction)
-        )
+        try:
+            if not whole_window_delete:
+                self._set_status("ai_processing")
+            plan = (
+                ReplacementPlan(target_text=window.text, replacement_text="")
+                if whole_window_delete
+                else self._removal_plan(window.text, instruction)
+            )
+        except ProviderCallTimeout:
+            print("[ai] 删除超时")
+            self._set_status("error_llm")
+            self._show_failure("处理超时，请重试或先说撤销", "delete_timeout")
+            return
+        except Exception as e:
+            print(f"[ai] 删除失败: {e}")
+            self._set_status("error_llm")
+            self._show_failure("AI 删除失败，请重试", f"delete:{e}")
+            return
         with self._io():
             result = self._env.apply_replacement_plan(
                 window,
@@ -361,13 +377,26 @@ class InstructionModeExecutor:
         self._handle_memo_result(self._memo.save(key, value, selected), selected)
 
     def _do_memo_recall(self, key: str, selected: str) -> bool:
-        return self._handle_memo_result(self._memo.recall(key), selected)
+        result = self._memo.recall(key)
+        keep_status = self._handle_memo_result(result, selected)
+        if result.action == "insert":
+            self._show(f"已读取「{key}」")
+            return True
+        return keep_status
 
     def _do_memo_list(self, selected: str) -> bool:
-        return self._handle_memo_result(self._memo.list_all(), selected)
+        result = self._memo.list_all()
+        if result.action == "insert":
+            self._show(result.text)
+            return True
+        return self._handle_memo_result(result, selected)
 
     def _do_memo_delete(self, key: str) -> None:
-        self._handle_memo_result(self._memo.delete(key))
+        key = (key or "").strip()
+        if not key:
+            self._handle_memo_result(self._memo.delete(key))
+            return
+        self._show(f"为避免误删，请在备忘页删除「{key}」")
 
     def _show_copied(self, text: str) -> None:
         preview = str(text or "").replace("\n", " ")[:60]
@@ -375,6 +404,28 @@ class InstructionModeExecutor:
         self._show(f"已复制：{preview}{suffix}")
 
 
+def _prefer_tracked_delete_instruction(text: str) -> bool:
+    compact = "".join(str(text or "").split()).strip("。.!！？?，,；;：:")
+    for prefix in ("我说", "请", "帮我", "麻烦", "麻烦你"):
+        if compact.startswith(prefix):
+            compact = compact[len(prefix):]
+            break
+    return compact in {
+        "删除",
+        "删掉",
+        "删了",
+        "清除",
+        "清空",
+        "删除所有",
+        "删掉所有",
+        "清空所有",
+        "删除刚才",
+        "删掉刚才",
+        "删除上一段",
+        "删掉上一段",
+        "删除最近输出",
+        "删掉最近输出",
+    }
 def _forced_punctuation_break(text: str) -> tuple[str, str] | None:
     pending = str(text or "")
     compact_len = len(pending.strip())

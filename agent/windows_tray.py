@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import atexit
+import ctypes
 import os
 import threading
 import time
@@ -27,6 +29,8 @@ from agent.windows_main_window import WindowsMainWindow
 _USER_DIR = Path.home() / ".voice-keyboard"
 _CONFIG = _USER_DIR / "config.yaml"
 _APP_NAME = "Voice Keyboard"
+_MUTEX_ALREADY_EXISTS = 183
+_TRAY_MUTEX_HANDLE = None
 _HOTKEY_OPTIONS = [
     ("shift_r", "Right Shift", "\u53f3 Shift"),
     ("alt_r", "Right Alt", "\u53f3 Alt"),
@@ -37,6 +41,31 @@ _HOTKEY_OPTIONS = [
     ("f10", "F10", "F10"),
 ]
 
+
+def _release_single_instance() -> None:
+    global _TRAY_MUTEX_HANDLE
+    if _TRAY_MUTEX_HANDLE:
+        try:
+            ctypes.windll.kernel32.CloseHandle(_TRAY_MUTEX_HANDLE)
+        except Exception:
+            pass
+        _TRAY_MUTEX_HANDLE = None
+
+
+def _acquire_single_instance() -> bool:
+    global _TRAY_MUTEX_HANDLE
+    if os.name != "nt":
+        return True
+    handle = ctypes.windll.kernel32.CreateMutexW(None, False, "Local\\VoiceKeyboardTray")
+    if not handle:
+        return True
+    if ctypes.windll.kernel32.GetLastError() == _MUTEX_ALREADY_EXISTS:
+        ctypes.windll.kernel32.CloseHandle(handle)
+        print("[tray] another Voice Keyboard tray instance is already running")
+        return False
+    _TRAY_MUTEX_HANDLE = handle
+    atexit.register(_release_single_instance)
+    return True
 
 
 class WindowsTrayApp:
@@ -55,6 +84,8 @@ class WindowsTrayApp:
         )
 
     def run(self) -> None:
+        if not _acquire_single_instance():
+            return
         ensure_user_config()
         self._history.compact()
         threading.Thread(target=self._status.run, daemon=True, name="StatusWindow").start()
@@ -273,36 +304,62 @@ class WindowsTrayApp:
     def _set_hotkey(self, key_name: str, value: str):
         cfg = self._read_config()
         audio = cfg.setdefault("audio", {})
+        old_value = audio.get(key_name)
         audio[key_name] = value
         self._write_config(cfg)
-        self._reload_backend_now(notify=False)
+        if not self._reload_backend_now(notify=False, expected_hotkeys={key_name: value}):
+            audio[key_name] = old_value
+            self._write_config(cfg)
+            self._reload_backend_now(notify=False)
+            self._notify_text("Hotkey reload failed; restored previous setting")
+            return
         self._notify("hotkey_set", name=self._hotkey_display_name(key_name), value=self._hotkey_display_value(value))
         if self._icon is not None:
             self._icon.menu = self._menu()
             self._icon.update_menu()
 
-    def _start_backend(self):
-        with self._lock:
-            self._backend = build_runtime_backend(
+    def _start_backend(self) -> bool:
+        try:
+            backend = build_runtime_backend(
                 RuntimeOptions(no_serial=True),
                 self._buf,
                 self._status,
                 self._history,
             )
+        except Exception as e:
+            print(f"[tray] backend start failed: {e}")
+            return False
+        with self._lock:
+            self._backend = backend
+        return True
 
     def _reload_backend(self, _icon=None, _item=None):
         self._reload_backend_now(notify=True)
 
-    def _reload_backend_now(self, notify: bool = True):
+    def _reload_backend_now(self, notify: bool = True, expected_hotkeys: dict | None = None) -> bool:
         with self._lock:
             if self._backend is not None:
                 self._backend.stop()
             self._backend = None
         self._status.set_state("recognizing")
-        self._start_backend()
+        ok = self._start_backend()
         self._status.set_state("idle")
+        if not ok:
+            if notify:
+                self._notify_text("Config reload failed")
+            return False
+        if expected_hotkeys:
+            with self._lock:
+                active_hotkeys = dict(getattr(self._backend, "hotkeys", {}) or {})
+            for key, expected in expected_hotkeys.items():
+                if active_hotkeys.get(key) != expected:
+                    print(f"[tray] hotkey reload mismatch: {key} expected={expected} active={active_hotkeys.get(key)}")
+                    if notify:
+                        self._notify_text("Hotkey reload failed")
+                    return False
         if notify:
             self._notify("config_reloaded")
+        return True
 
     def _language(self) -> str:
         cfg = self._read_config()

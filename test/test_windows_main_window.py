@@ -27,6 +27,14 @@ class WindowsMainWindowTests(unittest.TestCase):
 
 
 
+    def test_split_words_accepts_common_separators(self):
+        from agent.windows_main_window import _split_words
+
+        self.assertEqual(
+            _split_words("\u8bb0\u4e00\u4e0b\uff0c\u8bb0\u4f4f, \u5907\u5fd8\u3001\u6536\u4e00\u4e0b"),
+            ["\u8bb0\u4e00\u4e0b", "\u8bb0\u4f4f", "\u5907\u5fd8", "\u6536\u4e00\u4e0b"],
+        )
+
     def test_format_sync_evaluation_message_for_local_loop(self):
         from agent.windows_main_window import format_sync_evaluation_message
 

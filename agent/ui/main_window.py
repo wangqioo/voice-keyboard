@@ -45,7 +45,7 @@ from agent.intent_diagnostics import (
 )
 from agent.intent_loop import run_training_loop
 from agent.intent_evaluation import evaluate_reviewed_samples
-from agent.intent_model_ui import get_model_status, rollback_model_for_ui, train_local_model_for_ui
+from agent.intent_model_ui import get_latest_model_report_summary, get_model_status, rollback_model_for_ui, train_local_model_for_ui
 from agent.intent_sync import sync_local_corrected_intents
 from agent.intent_training import _DEFAULT_PATH as _INTENT_SAMPLES_PATH
 

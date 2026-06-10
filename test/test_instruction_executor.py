@@ -296,7 +296,7 @@ class InstructionModeExecutorTests(unittest.TestCase):
         executor.execute(VoiceTextOperation("edit"), "把全文翻译成英文", "")
 
         env.apply_replacement_plan.assert_not_called()
-        self.assertEqual(states, ["error_llm"])
+        self.assertEqual(states, ["ai_processing", "error_llm"])
         self.assertEqual(messages, ["处理超时，请重试或先说撤销"])
 
     def test_selected_delete_uses_controlled_delete(self):
@@ -306,11 +306,11 @@ class InstructionModeExecutorTests(unittest.TestCase):
 
         with (
             patch("agent.typer.get_selection", return_value="world"),
-            patch("agent.typer.replace_selection") as replace_selection,
+            patch("agent.typer.delete_selection") as delete_selection,
         ):
             executor.execute(VoiceTextOperation("delete"), "删掉", "world")
 
-        replace_selection.assert_called_once_with("", original="world")
+        delete_selection.assert_called_once_with(original="world")
         self.assertEqual(buf.current_segment, "hello ")
 
     def test_delete_uses_structured_replacement_plan_for_subtarget(self):
@@ -633,6 +633,41 @@ class InstructionModeExecutorTests(unittest.TestCase):
 
         self.assertEqual(messages, ["AI \u5199\u4f5c\u5931\u8d25\uff0c\u8bf7\u91cd\u8bd5"])
         self.assertEqual(executor.last_status, ("error", "write:offline"))
+
+    def test_memo_list_shows_feedback_without_inserting_text(self):
+        env = MagicMock()
+        memo = MagicMock()
+        memo.keys.return_value = ["邮箱"]
+        memo.get.return_value = "me@example.com"
+        messages = []
+        executor = InstructionModeExecutor(
+            MagicMock(),
+            env,
+            memo_store=memo,
+            show=messages.append,
+        )
+
+        keep_status = executor.execute(VoiceTextOperation("memo_list"), "看一下我的记忆库", "")
+
+        self.assertTrue(keep_status)
+        env.insert_generated_text.assert_not_called()
+        self.assertEqual(messages, ["邮箱: me@example.com"])
+
+    def test_memo_delete_requires_manual_delete_page(self):
+        env = MagicMock()
+        memo = MagicMock()
+        messages = []
+        executor = InstructionModeExecutor(
+            MagicMock(),
+            env,
+            memo_store=memo,
+            show=messages.append,
+        )
+
+        executor.execute(VoiceTextOperation("memo_delete", key="邮箱"), "忘掉我的邮箱", "")
+
+        memo.delete.assert_not_called()
+        self.assertEqual(messages, ["为避免误删，请在备忘页删除「邮箱」"])
 
 
 if __name__ == "__main__":

@@ -50,6 +50,17 @@ class MemoStoreTests(unittest.TestCase):
                 {"邮箱": "me@example.com"},
             )
 
+    def test_existing_instance_reloads_when_file_changes(self):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "memo.json"
+            first = MemoStore(path)
+            second = MemoStore(path)
+
+            second.save("手机号", "15850752485")
+
+            self.assertEqual(first.get("手机号"), "15850752485")
+            self.assertEqual(first.keys(), ["手机号"])
+
     def test_imports_legacy_reusable_text_memory_json_when_new_store_is_missing(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

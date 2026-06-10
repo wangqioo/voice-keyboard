@@ -111,6 +111,13 @@ def _write_config(cfg: dict) -> None:
     )
 
 
+def _split_words(raw: str) -> list[str]:
+    text = str(raw or "")
+    for sep in ("\uff0c", "\u3001", "\n", "\t"):
+        text = text.replace(sep, ",")
+    return [item.strip() for item in text.split(",") if item.strip()]
+
+
 def _language() -> str:
     ui = (_read_config().get("ui") or {})
     return "en" if str(ui.get("language", "zh")).lower().startswith("en") else "zh"
@@ -156,7 +163,10 @@ class WindowsMainWindow:
         self._history_rows: list[dict] = []
         self._intent_rows: list[tuple[int, dict]] = []
         self._memo_keys: list[str] = []
+        self._memo_snapshot: dict[str, str] = {}
+        self._memo_poll_after_id = None
         self._vars: dict[str, tk.StringVar] = {}
+        self._history.add_listener(lambda _entry: self._queue.put("history"))
 
     def show(self) -> None:
         if self._thread is None or not self._thread.is_alive():
@@ -193,6 +203,8 @@ class WindowsMainWindow:
             elif msg == "stop":
                 root.destroy()
                 return
+            elif msg == "history" and hasattr(self, "_history_tree"):
+                self._refresh_history()
         root.after(150, self._poll_queue)
 
     def _show_root(self) -> None:
@@ -409,6 +421,21 @@ class WindowsMainWindow:
         self._intent_detail.configure(yscrollcommand=detail_scroll.set)
     def _build_memo_tab(self) -> None:
         tab = self._tab("\u8bb0\u5fc6\u5e93", "Memo Library")
+        trigger_box = ttk.LabelFrame(tab, text=self._t("备忘录触发词", "Memo trigger words"), padding=(8, 6))
+        trigger_box.pack(fill="x", pady=(0, 8))
+        trigger_box.columnconfigure(1, weight=1)
+        trigger_fields = [
+            ("memo_save_words", self._t("输入关键词", "Save words")),
+            ("memo_lookup_actions", self._t("查询动作词", "Lookup actions")),
+            ("memo_wake_words", self._t("记忆唤醒词", "Wake words")),
+            ("memo_delete_words", self._t("删除关键词", "Delete words")),
+        ]
+        for row, (key, label) in enumerate(trigger_fields):
+            self._vars[key] = tk.StringVar()
+            ttk.Label(trigger_box, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=3)
+            ttk.Entry(trigger_box, textvariable=self._vars[key]).grid(row=row, column=1, sticky="ew", pady=3)
+        ttk.Button(trigger_box, text=self._t("保存关键词并重载", "Save words and reload"), command=self._save_memo_triggers).grid(row=0, column=2, rowspan=2, sticky="ew", padx=(10, 0))
+
         body = ttk.PanedWindow(tab, orient="horizontal")
         body.pack(fill="both", expand=True)
         left = ttk.Frame(body)
@@ -484,6 +511,8 @@ class WindowsMainWindow:
         self._load_intent_server_fields()
         self._refresh_intent_model_status()
         self._refresh_memo()
+        self._load_memo_trigger_fields()
+        self._schedule_memo_poll()
         self._load_config_fields()
         self._refresh_check()
 
@@ -770,12 +799,95 @@ class WindowsMainWindow:
             return
         self._copy_text(str(selected[1].get("text") or ""))
 
+    def _load_memo_trigger_fields(self) -> None:
+        cfg = _read_config()
+        triggers = (((cfg.get("instruction_mode") or {}).get("intent_fallbacks") or {}).get("memo_triggers") or {})
+        defaults = {
+            "memo_save_words": "记住,记一下,记下,备忘",
+            "memo_lookup_actions": "查一下,查询,查找,找一下,调出,调取,读取,打开,打出,输入,填入,贴出",
+            "memo_wake_words": "记忆,记忆库,备忘,备忘录,我记住的,我记下的,之前记的,上次记的,保存过的,存过的",
+            "memo_delete_words": "忘记,忘掉,删除备忘,删掉备忘,删除记忆,删掉记忆,不要记",
+        }
+        mapping = {
+            "memo_save_words": "save_words",
+            "memo_lookup_actions": "lookup_actions",
+            "memo_wake_words": "wake_words",
+            "memo_delete_words": "delete_words",
+        }
+        for var_name, cfg_name in mapping.items():
+            values = triggers.get(cfg_name)
+            if isinstance(values, list):
+                text = ",".join(str(value) for value in values)
+            elif isinstance(values, str):
+                text = values
+            else:
+                text = defaults[var_name]
+            if var_name in self._vars:
+                self._vars[var_name].set(text)
+
+    def _save_memo_triggers(self) -> None:
+        cfg = _read_config()
+        fallbacks = cfg.setdefault("instruction_mode", {}).setdefault("intent_fallbacks", {})
+        triggers = fallbacks.setdefault("memo_triggers", {})
+        mapping = {
+            "memo_save_words": "save_words",
+            "memo_lookup_actions": "lookup_actions",
+            "memo_wake_words": "wake_words",
+            "memo_delete_words": "delete_words",
+        }
+        for var_name, cfg_name in mapping.items():
+            raw = self._vars[var_name].get() if var_name in self._vars else ""
+            triggers[cfg_name] = _split_words(raw)
+        _write_config(cfg)
+        self._reload_config(False)
+        self._notify_text(self._t("备忘录关键词已保存", "Memo trigger words saved"))
+
     def _refresh_memo(self) -> None:
+        current_key = self._memo_key.get().strip() if hasattr(self, "_memo_key") else ""
         self._memo = MemoStore()
-        self._memo_keys = sorted(self._memo.keys())
+        snapshot = self._memo_snapshot_from_store()
+        self._replace_memo_list(sorted(snapshot.keys()), selected_key=current_key, snapshot=snapshot)
+
+    def _refresh_memo_if_changed(self) -> None:
+        if self._root is None or not hasattr(self, "_memo_list"):
+            return
+        snapshot = self._memo_snapshot_from_store()
+        if snapshot != self._memo_snapshot:
+            current_key = self._memo_key.get().strip() if hasattr(self, "_memo_key") else ""
+            self._replace_memo_list(sorted(snapshot.keys()), selected_key=current_key, snapshot=snapshot)
+            if current_key in snapshot:
+                self._set_text(self._memo_text, snapshot[current_key])
+
+    def _memo_snapshot_from_store(self) -> dict[str, str]:
+        return {key: self._memo.get(key) or "" for key in self._memo.keys()}
+
+    def _replace_memo_list(self, keys: list[str], *, selected_key: str = "", snapshot: dict[str, str] | None = None) -> None:
+        self._memo_keys = keys
+        self._memo_snapshot = dict(snapshot or {})
         self._memo_list.delete(0, "end")
         for key in self._memo_keys:
             self._memo_list.insert("end", key)
+        if selected_key in self._memo_keys:
+            index = self._memo_keys.index(selected_key)
+            self._memo_list.selection_set(index)
+            self._memo_list.see(index)
+
+    def _schedule_memo_poll(self) -> None:
+        if self._root is None:
+            return
+        if self._memo_poll_after_id is not None:
+            try:
+                self._root.after_cancel(self._memo_poll_after_id)
+            except Exception:
+                pass
+        self._memo_poll_after_id = self._root.after(1000, self._poll_memo)
+
+    def _poll_memo(self) -> None:
+        self._memo_poll_after_id = None
+        try:
+            self._refresh_memo_if_changed()
+        finally:
+            self._schedule_memo_poll()
 
     def _load_selected_memo(self) -> None:
         sel = self._memo_list.curselection()
@@ -823,7 +935,7 @@ class WindowsMainWindow:
         self._vars["ptt_key"].set(self._hotkey_label(str(audio.get("ptt_key", ""))))
         self._vars["ai_key"].set(self._hotkey_label(str(audio.get("ai_key", ""))))
         for path, var in self._vars.items():
-            if path in ("ptt_key", "ai_key"):
+            if path in ("ptt_key", "ai_key") or "." not in path:
                 continue
             head, key = path.split(".", 1)
             value = (cfg.get(head) or {}).get(key, "")
@@ -832,16 +944,28 @@ class WindowsMainWindow:
     def _save_hotkeys(self) -> None:
         cfg = _read_config()
         audio = cfg.setdefault("audio", {})
-        audio["ptt_key"] = self._hotkey_value(self._vars["ptt_key"].get())
-        audio["ai_key"] = self._hotkey_value(self._vars["ai_key"].get())
+        old_ptt = audio.get("ptt_key")
+        old_ai = audio.get("ai_key")
+        ptt_key = self._hotkey_value(self._vars["ptt_key"].get())
+        ai_key = self._hotkey_value(self._vars["ai_key"].get())
+        audio["ptt_key"] = ptt_key
+        audio["ai_key"] = ai_key
         _write_config(cfg)
-        self._reload_config(False)
+        ok = self._reload_config(False, expected_hotkeys={"ptt_key": ptt_key, "ai_key": ai_key})
+        if ok is False:
+            audio["ptt_key"] = old_ptt
+            audio["ai_key"] = old_ai
+            _write_config(cfg)
+            self._reload_config(False)
+            self._notify_text(self._t("\u5feb\u6377\u952e\u91cd\u8f7d\u5931\u8d25\uff0c\u5df2\u6062\u590d\u539f\u8bbe\u7f6e", "Hotkey reload failed; restored previous setting"))
+            self._load_config_fields()
+            return
         self._notify_text(self._t("\u5feb\u6377\u952e\u5df2\u4fdd\u5b58", "Hotkeys saved"))
 
     def _save_config(self) -> None:
         cfg = _read_config()
         for path, var in self._vars.items():
-            if path in ("ptt_key", "ai_key"):
+            if path in ("ptt_key", "ai_key") or "." not in path:
                 continue
             head, key = path.split(".", 1)
             cfg.setdefault(head, {})

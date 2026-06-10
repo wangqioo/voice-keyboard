@@ -1,9 +1,28 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
 
 
 class IntentModelUITests(unittest.TestCase):
+    def test_get_latest_model_report_summary_reads_newest_report(self):
+        from agent.intent_model_ui import get_latest_model_report_summary
+
+        with tempfile.TemporaryDirectory() as td:
+            reports = Path(td)
+            old = reports / "old.json"
+            new = reports / "new.json"
+            old.write_text('{"accuracy_label":"50.0%","wrong":1,"total":2}', encoding="utf-8")
+            new.write_text('{"accuracy_label":"100.0%","wrong":0,"total":2}', encoding="utf-8")
+            os.utime(old, (1, 1))
+            os.utime(new, (2, 2))
+
+            summary = get_latest_model_report_summary(reports)
+
+            self.assertEqual(summary["accuracy_label"], "100.0%")
+            self.assertEqual(summary["wrong"], 0)
+            self.assertEqual(summary["path"], str(new))
+
     def test_train_local_model_for_ui_registers_version_and_report(self):
         from agent.intent_model_ui import get_model_status, train_local_model_for_ui
 

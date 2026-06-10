@@ -5,7 +5,7 @@ of AIHandler so the handler can stay focused on orchestration and side effects.
 """
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
 from agent.intent_model import load_intent_model
@@ -74,6 +74,44 @@ class LocalIntentMatch:
 
 
 @dataclass(frozen=True)
+class MemoTriggerConfig:
+    save_words: tuple[str, ...] = ("记住", "记一下", "记下", "备忘")
+    lookup_actions: tuple[str, ...] = (
+        "查一下", "查询", "查找", "找一下", "调出", "调取",
+        "读取", "打开", "打出", "输入", "填入", "贴出",
+    )
+    wake_words: tuple[str, ...] = (
+        "记忆", "记忆库", "备忘", "备忘录", "我记住的", "我记下的",
+        "之前记的", "上次记的", "保存过的", "存过的",
+    )
+    delete_words: tuple[str, ...] = (
+        "忘记", "忘掉", "删除备忘", "删掉备忘", "删除记忆", "删掉记忆", "不要记",
+    )
+
+    @classmethod
+    def from_config(cls, cfg: dict | None) -> "MemoTriggerConfig":
+        if not isinstance(cfg, dict):
+            return cls()
+        return cls(
+            save_words=_words_from_config(cfg.get("save_words"), cls.save_words),
+            lookup_actions=_words_from_config(cfg.get("lookup_actions"), cls.lookup_actions),
+            wake_words=_words_from_config(cfg.get("wake_words"), cls.wake_words),
+            delete_words=_words_from_config(cfg.get("delete_words"), cls.delete_words),
+        )
+
+
+def _words_from_config(value, default: tuple[str, ...]) -> tuple[str, ...]:
+    if isinstance(value, str):
+        raw = value.replace("，", ",").replace("\n", ",").split(",")
+    elif isinstance(value, (list, tuple)):
+        raw = value
+    else:
+        return default
+    words = tuple(str(item).strip() for item in raw if str(item).strip())
+    return words or default
+
+
+@dataclass(frozen=True)
 class IntentFallbackOptions:
     multi_step_guard: bool = True
     selected_edit_override: bool = True
@@ -85,6 +123,7 @@ class IntentFallbackOptions:
     intent_model_path: str = ""
     intent_model_min_similarity: float = 1.0
     local_confidence_threshold: IntentConfidence = "high"
+    memo_triggers: MemoTriggerConfig = field(default_factory=MemoTriggerConfig)
 
     @classmethod
     def from_config(cls, cfg: dict | None) -> "IntentFallbackOptions":
@@ -105,6 +144,7 @@ class IntentFallbackOptions:
             intent_model_path=str(cfg.get("intent_model_path", "")),
             intent_model_min_similarity=float(cfg.get("intent_model_min_similarity", 1.0)),
             local_confidence_threshold=str(cfg.get("local_confidence_threshold", "high")),
+            memo_triggers=MemoTriggerConfig.from_config(cfg.get("memo_triggers")),
         )
 
 
@@ -130,11 +170,10 @@ _CLASSIFY_SYSTEM = """你是 Voice Keyboard Engine 的 Instruction Mode 意图�
 2. 明确的快捷键或系统动作 → {"type":"shortcut","name":"动作名称"}。动作必须来自本地 Shortcut Catalog，表示触发该名称对应的本地动作；打开应用、打开系统设置也走这个类型。name 必须优先使用可用快捷键列表里的原始名称。
 3. 撤回/撤销/恢复上一步操作 → {"type":"shortcut","name":"撤销"}。只有在本地 Shortcut Catalog 没有"撤销"时才返回 {"type":"undo"}。
 4. 明确要求删除/清除 Explicit Selection（明确选区），或说“删除/清空/全部删除”等整体删除（不是修改，是直接删掉） → {"type":"delete"}
-5. 用户要保存备忘片段（"记一下"、"记住"、"备忘"、"存一下"等关键词）。key 是用户给这条文本起的名字（如"手机号"、"邮箱"、"家庭地址"），value 是要保存的文本：
-   - 如果有 Explicit Selection（明确选区），value 就是该明确选区（此时返回空字符串作为 value，由程序自动使用）
-   - 如果用户在话里直接说出了内容（如"我的邮箱是 abc@xx.com"），value 就是那段内容
-   → {"type":"memo_save","key":"...","value":"..."}
-6. 用户要查询已保存的备忘（"我的xxx是什么"、"我的xxx"、"xxx是多少"、"xxx是啥"等问句）。
+5. 用户要保存备忘片段（"记一下"、"记住"、"备忘"、"存一下"等关键词）。保存备忘【必须】依赖 Explicit Selection（明确选区）；value 始终由程序使用当前选区，所以返回空字符串。你的任务是从用户说的话里提炼一个简短、自然、可复用的 key（如"手机号"、"邮箱"、"家庭地址"、"服务器地址"、"常用回复"）。
+   - 有 Explicit Selection 时 → {"type":"memo_save","key":"提炼出的名称","value":""}
+   - 没有 Explicit Selection 时，不要把用户话里的内容当作 value 保存，返回 {"type":"chat","reply":"请先选中要记住的文本"}
+6. 用户要查询已保存的备忘。查一下、查询、查找、调出、调取、读取、输入、填入、贴出等查询动作词即可触发，不要求用户必须说“记忆库”或“备忘录”。
    匹配 key 时必须容忍以下情况：
    - STT 同音字错误：如"话"→"画"、"号"→"好"、"件"→"建"，根据上下文判断
    - 近义说法：如"最喜欢说"vs"最爱说"vs"常说"，"地址"vs"住址"
@@ -168,14 +207,14 @@ Rules:
 2. shortcut.name must come from Shortcut Catalog.
 3. Use edit for modifying selected or recently typed text. Use write for generating new content.
 4. Use delete for direct selected-text or whole-content deletion.
-5. Use memo_* for memory save, recall, delete, or list.
-6. Use chat for questions or uncertainty; keep reply under 30 Chinese characters.
+5. Use memo_recall, memo_delete, or memo_list for memory operations. Use memo_save only when Explicit Selection exists; key is extracted from the spoken request and value must be empty. If saving without selection, return chat asking the user to select text first.
+6. A memo lookup may be triggered by query action words such as 查一下/查询/调出/调取/读取/输入/填入; memory wake words are helpful but not required.
+7. Use chat for questions or uncertainty; keep reply under 30 Chinese characters.
 """
 
 _INTENT_CACHE_MAX = 64
 _INTENT_CACHE: dict[tuple, dict] = {}
 _INTENT_CACHE_ORDER: list[tuple] = []
-
 
 
 def classify_intent(
@@ -261,6 +300,18 @@ def classify_local_intent_match(
     if ctx.selected and looks_like_selected_delete_instruction(ctx.text):
         return LocalIntentMatch({"type": "delete"}, "high", "delete")
 
+    shortcut_alias = _shortcut_alias_from_text(ctx.text, ctx.shortcuts, ctx.shortcut_entries)
+    if shortcut_alias:
+        return LocalIntentMatch({"type": "shortcut", "name": shortcut_alias}, "high", "shortcut_alias")
+
+    exact_shortcut = _exact_shortcut_from_text(ctx.text, ctx.shortcuts)
+    if exact_shortcut:
+        return LocalIntentMatch({"type": "shortcut", "name": exact_shortcut}, "high", "exact_shortcut")
+
+    memo_intent = _local_memo_intent(ctx, fallbacks)
+    if memo_intent is not None:
+        return memo_intent
+
     if looks_like_write_instruction(ctx.text):
         return LocalIntentMatch({"type": "write"}, "high", "write")
 
@@ -271,19 +322,16 @@ def classify_local_intent_match(
     ):
         return LocalIntentMatch({"type": "edit"}, "high", "edit")
 
-    shortcut_alias = _shortcut_alias_from_text(ctx.text, ctx.shortcuts, ctx.shortcut_entries)
-    if shortcut_alias:
-        return LocalIntentMatch({"type": "shortcut", "name": shortcut_alias}, "high", "shortcut_alias")
-
-    exact_shortcut = _exact_shortcut_from_text(ctx.text, ctx.shortcuts)
-    if exact_shortcut:
-        return LocalIntentMatch({"type": "shortcut", "name": exact_shortcut}, "high", "exact_shortcut")
-
-    if fallbacks.memo_fuzzy_recall and looks_like_memo_lookup(ctx.text):
-        resolution = resolve_memo_key(ctx.text, ctx.memo_records)
+    if (
+        fallbacks.memo_fuzzy_recall
+        and not ctx.selected
+        and looks_like_memo_lookup(ctx.text, fallbacks.memo_triggers)
+    ):
+        resolution = resolve_memo_key(_parse_memo_lookup_query(ctx.text, fallbacks.memo_triggers), ctx.memo_records)
         if resolution.can_recall:
             return LocalIntentMatch({"type": "memo_recall", "key": resolution.key}, "high", "memo_recall")
-        return LocalIntentMatch({"type": "chat", "reply": resolution.feedback()}, "high", "memo_missing")
+        if ctx.memo_records:
+            return LocalIntentMatch({"type": "chat", "reply": resolution.feedback()}, "high", "memo_missing")
 
     return None
 
@@ -344,13 +392,22 @@ def apply_intent_fallbacks(
         if shortcut_name:
             return {"type": "shortcut", "name": shortcut_name}
         if result.get("type") == "shortcut":
-            return LocalIntentMatch({"type": "chat", "reply": "没有找到可打开的应用"}, "high", "open_app_missing")
+            return {"type": "chat", "reply": "没有找到可打开的应用"}
     if intent == "undo" and "撤销" in ctx.shortcuts:
-        return LocalIntentMatch({"type": "shortcut", "name": "撤销"}, "high", "undo")
+        return {"type": "shortcut", "name": "撤销"}
     if looks_like_whole_delete_instruction(ctx.text):
         return {"type": "delete"}
     if ctx.selected and looks_like_selected_delete_instruction(ctx.text):
         return {"type": "delete"}
+    memo_intent = _local_memo_intent(ctx, fallbacks)
+    if memo_intent is not None and _confidence_allows_local(memo_intent.confidence, fallbacks):
+        return memo_intent.result
+    if intent == "memo_save":
+        if not ctx.selected:
+            return {"type": "chat", "reply": "请先选中要记住的文本"}
+        clean = dict(result)
+        clean["value"] = ""
+        return clean
     if looks_like_write_instruction(ctx.text):
         return {"type": "write"}
     if (
@@ -363,13 +420,19 @@ def apply_intent_fallbacks(
     shortcut_alias = _shortcut_alias_from_text(ctx.text, ctx.shortcuts, ctx.shortcut_entries)
     if shortcut_alias and intent in {"chat", "shortcut"}:
         return {"type": "shortcut", "name": shortcut_alias}
-    if fallbacks.memo_fuzzy_recall and intent == "memo_recall":
-        resolution = resolve_memo_key(ctx.text, ctx.memo_records)
+    if fallbacks.memo_fuzzy_recall and not ctx.selected and intent == "memo_recall":
+        resolution = resolve_memo_key(_parse_memo_lookup_query(ctx.text, fallbacks.memo_triggers), ctx.memo_records)
         if resolution.can_recall:
             return {"type": "memo_recall", "key": resolution.key}
         return {"type": "chat", "reply": resolution.feedback()}
-    if fallbacks.memo_fuzzy_recall and looks_like_memo_lookup(ctx.text):
-        resolution = resolve_memo_key(ctx.text, ctx.memo_records)
+    if (
+        fallbacks.memo_fuzzy_recall
+        and not ctx.selected
+        and ctx.memo_records
+        and intent not in {"memo_save", "memo_delete", "memo_list"}
+        and looks_like_memo_lookup(ctx.text, fallbacks.memo_triggers)
+    ):
+        resolution = resolve_memo_key(_parse_memo_lookup_query(ctx.text, fallbacks.memo_triggers), ctx.memo_records)
         if resolution.can_recall:
             return {"type": "memo_recall", "key": resolution.key}
         if intent == "chat":
@@ -470,15 +533,154 @@ def looks_like_whole_delete_instruction(text: str) -> bool:
     )
 
 
-def looks_like_memo_lookup(text: str) -> bool:
-    if any(hint in text for hint in ("什么意思", "什么含义", "这个词", "这个概念")):
+def looks_like_memo_lookup(text: str, triggers: MemoTriggerConfig | None = None) -> bool:
+    triggers = triggers or MemoTriggerConfig()
+    compact = _compact_shortcut_text(text)
+    if any(hint in compact for hint in ("什么意思", "什么含义", "这个词", "这个概念")):
         return False
-    return (
-        "我的" in text
-        or text.startswith(("查询", "查一下", "插入", "输入", "填入"))
-        or text.endswith(("是什么", "是多少", "是啥"))
-        or "打出来" in text
+    return any(marker and marker in compact for marker in triggers.lookup_actions)
+
+
+def _has_memo_wake_word(compact: str, triggers: MemoTriggerConfig | None = None) -> bool:
+    triggers = triggers or MemoTriggerConfig()
+    return any(marker and marker in compact for marker in triggers.wake_words)
+
+
+def _local_memo_intent(
+    ctx: IntentContext,
+    fallbacks: IntentFallbackOptions,
+) -> LocalIntentMatch | None:
+    text = str(ctx.text or "").strip()
+    compact = _compact_shortcut_text(text)
+    if not compact:
+        return None
+
+    if _looks_like_memo_list(compact):
+        return LocalIntentMatch({"type": "memo_list"}, "high", "memo_list")
+
+    missing_selection = _local_memo_save_requires_selection(
+        text,
+        has_selected=bool(ctx.selected),
+        triggers=fallbacks.memo_triggers,
     )
+    if missing_selection is not None:
+        return missing_selection
+
+    delete_query = _parse_memo_delete_query(text, fallbacks.memo_triggers)
+    if delete_query and fallbacks.memo_fuzzy_recall:
+        resolution = resolve_memo_key(delete_query, ctx.memo_records)
+        if resolution.can_recall:
+            return LocalIntentMatch({"type": "memo_delete", "key": resolution.key}, "high", "memo_delete")
+        if ctx.memo_records:
+            return LocalIntentMatch({"type": "chat", "reply": resolution.feedback()}, "high", "memo_delete_missing")
+        return LocalIntentMatch({"type": "chat", "reply": "还没有保存任何备忘"}, "high", "memo_delete_empty")
+
+    if (
+        fallbacks.memo_fuzzy_recall
+        and ctx.memo_records
+        and not ctx.selected
+        and looks_like_memo_lookup(text, fallbacks.memo_triggers)
+    ):
+        resolution = resolve_memo_key(_parse_memo_lookup_query(text, fallbacks.memo_triggers), ctx.memo_records)
+        if resolution.can_recall:
+            return LocalIntentMatch({"type": "memo_recall", "key": resolution.key}, "high", "memo_recall")
+        return LocalIntentMatch({"type": "chat", "reply": resolution.feedback()}, "high", "memo_missing")
+
+    if (
+        fallbacks.memo_fuzzy_recall
+        and not ctx.selected
+        and looks_like_memo_lookup(text, fallbacks.memo_triggers)
+    ):
+        return LocalIntentMatch({"type": "chat", "reply": "还没有保存任何备忘"}, "medium", "memo_empty")
+
+    return None
+
+
+def _looks_like_memo_list(compact: str) -> bool:
+    return any(
+        marker in compact
+        for marker in (
+            "列出备忘",
+            "列出所有备忘",
+            "查看备忘",
+            "看一下备忘",
+            "我的备忘",
+            "记忆库",
+            "查看记忆",
+            "看一下记忆",
+            "都记了什么",
+            "记了什么",
+            "导出备忘",
+            "导出记忆",
+        )
+    )
+
+
+def _local_memo_save_requires_selection(
+    text: str,
+    *,
+    has_selected: bool,
+    triggers: MemoTriggerConfig | None = None,
+) -> LocalIntentMatch | None:
+    compact = _compact_shortcut_text(text)
+    if not looks_like_memo_save_command(compact, triggers):
+        return None
+    if any(marker in compact for marker in ("列出", "查看", "看一下", "忘掉", "删除", "删掉")):
+        return None
+    if has_selected:
+        return None
+    return LocalIntentMatch(
+        {"type": "chat", "reply": "请先选中要记住的文本"},
+        "high",
+        "memo_save_no_selection",
+    )
+
+
+def looks_like_memo_save_command(text: str, triggers: MemoTriggerConfig | None = None) -> bool:
+    triggers = triggers or MemoTriggerConfig()
+    compact = _compact_shortcut_text(text)
+    return any(marker and marker in compact for marker in triggers.save_words)
+
+
+def _parse_memo_lookup_query(text: str, triggers: MemoTriggerConfig | None = None) -> str:
+    triggers = triggers or MemoTriggerConfig()
+    query = _compact_shortcut_text(text)
+    for prefix in ("我说", "请", "麻烦你", "麻烦", "给我", "帮我"):
+        if query.startswith(prefix):
+            query = query[len(prefix):]
+            break
+    for marker in triggers.lookup_actions:
+        query = query.replace(marker, "")
+    noise_words = tuple(triggers.wake_words) + (
+        "里", "里的", "里面", "里面的", "中", "中的", "的", "我的", "我家", "我",
+        "是什么", "是多少", "是啥", "多少", "什么",
+    )
+    for word in noise_words:
+        query = query.replace(word, "")
+    return _clean_memo_part(query) or _clean_memo_part(text)
+
+
+def _parse_memo_delete_query(text: str, triggers: MemoTriggerConfig | None = None) -> str:
+    triggers = triggers or MemoTriggerConfig()
+    compact = _compact_shortcut_text(text)
+    if not any(marker and marker in compact for marker in triggers.delete_words):
+        return ""
+    if not _has_memo_wake_word(compact, triggers):
+        return ""
+    query = compact
+    for prefix in ("帮我", "请", "麻烦你", "麻烦", "给我"):
+        if query.startswith(prefix):
+            query = query[len(prefix):]
+            break
+    for marker in triggers.delete_words:
+        query = query.replace(marker, "")
+    for word in ("我的", "这个", "这条", "备忘", "备忘录", "记忆", "记忆库", "记录", "内容", "里", "里的"):
+        query = query.replace(word, "")
+    return _clean_memo_part(query)
+
+
+def _clean_memo_part(text: str) -> str:
+    return str(text or "").strip().strip("。.!！？?，,；;：:\"'“”‘’")
 
 
 def _macos_window_shortcut_from_text(text: str, shortcuts: tuple[str, ...]) -> str:
@@ -527,8 +729,6 @@ def _exact_shortcut_from_text(text: str, shortcuts: tuple[str, ...]) -> str:
         if _compact_shortcut_text(shortcut).lower() == compact:
             return shortcut
     return ""
-
-
 
 
 def _shortcut_alias_from_text(text: str, shortcuts: tuple[str, ...], shortcut_entries: tuple[ShortcutIntentEntry, ...] = ()) -> str:
@@ -626,6 +826,7 @@ def _open_app_target(text: str) -> str:
             target = target[:-len(suffix)]
     return target
 
+
 def _compact_shortcut_text(text: str) -> str:
     return "".join(
         char for char in str(text or "").strip()
@@ -668,7 +869,6 @@ def _mentions_multiple_explicit_operations(text: str) -> bool:
         if matches >= 2:
             return True
     return False
-
 
 
 def _confidence_allows_local(
@@ -746,6 +946,7 @@ def shortcut_intent_entries(catalog_entries) -> tuple[ShortcutIntentEntry, ...]:
             kind=getattr(entry, "kind", "shortcut"),
         ))
     return tuple(entry for entry in entries if entry.name)
+
 
 def memo_records(
     entries: MemoEntries | None,

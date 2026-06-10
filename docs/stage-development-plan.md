@@ -1,6 +1,6 @@
-# Voice Keyboard 阶段开发文档
+﻿# Voice Keyboard 阶段开发文档
 
-更新时间：2026-06-09
+更新时间：2026-06-10
 
 本文记录 Voice Keyboard 当前阶段已经完成的工作、训练服务器现状、AI 指令纠错闭环状态，以及后续继续开发的优先级。
 
@@ -216,12 +216,29 @@ http://SERVER:8000/review
 6. 支持回滚到上一版本。
 7. 用户继续纠错，样本继续回流。
 
+### Memo Library Intent Reliability
+
+- Memo 保存已收紧为必须依赖 Explicit Selection；选中文本作为 value，语音只用于提炼 key。
+- `instruction_mode.intent_fallbacks.memo_triggers` 已支持配置保存、查询、唤醒和删除触发词。
+- Windows 主窗口 Memo Library 页已加入触发词配置入口，并可保存后刷新运行时配置。
+- Memo Store 已支持已有实例感知外部文件变化，主窗口可轮询刷新记忆库列表。
+- AIHandler 已加入保存兜底：有 Explicit Selection 且语音像 memo-save 时，即使分类器返回 chat，也会转成 `memo_save`。
+- Memo 查询已支持 `查一下我的手机号`、`查一下我家地址`、`调出我的地址` 这类不带“记忆库/备忘录”的自然说法。
+- 已避免 `查找` 这类精确 Shortcut Catalog 动作被 memo 查询触发词误伤。
+- 状态栏/HUD 保持原语音转文字的小胶囊样式；AI 指令期间显示“我听到 + 进展/结果”，避免进展提示覆盖识别文本，指令结束后按最终提示计时隐藏。
+### Intent Accuracy Guard And Reporting
+
+- 已加入 baseline/candidate 评测报告对比 helper，输出准确率、正确数、错误数和错例数量差异，并标记 candidate 是否回退。
+- 训练闭环结果已包含 `model_activation` 决策；当前版本只报告是否建议激活，不自动回滚已写入的 `current.json`。
+- Mac 主窗口意图诊断页的模型状态会显示最新模型评测准确率和错例数。
+- 训练服务 review 页面已增加 Export Evaluation Dataset、Model Reports、Sync Status 三个静态入口。
+- Windows 当前无 Bash，`scripts/test-local.sh` 未直接执行；等价验证已用 unittest 全量、compileall 和 `git diff --check` 完成。
 ## 仍未完成
 
 - 服务器端尚未真正训练语义分类器或小模型。
 - 服务器端尚未形成模型版本发布机制。
 - 客户端尚未实现从服务器拉取发布模型。
-- 新模型自动激活 guard 尚未完善，例如 baseline/candidate 对比失败时不激活。
+- 新模型自动激活 guard 目前是 report-only：会输出 baseline/candidate 对比和是否建议激活，但尚未阻止或回滚 `current.json` 写入。
 - 评测集规模还不足，需要真实样本继续积累。
 - 高风险操作确认策略还需要和模型置信度更清晰地关联。
 
@@ -237,10 +254,10 @@ http://SERVER:8000/review
 ### P1：固定评测集和模型激活保护
 
 - 生成固定评测集，比较 `baseline`、`model-exact`、`model-0.8`。
-- 训练新版本后自动生成 baseline/candidate 对比摘要。
-- 如果新模型准确率低于当前 baseline，不自动激活。
+- 训练新版本后自动生成 baseline/candidate 对比摘要。已具备 report-only helper。
+- 如果新模型准确率低于当前 baseline，当前会标记 `model_activation.should_activate=false`；下一步需要把它接到真正激活/回滚流程。
 - 如果错例数量增加，提示人工检查。
-- 在 UI 显示最新模型报告路径、准确率和错例数量。
+- 在 UI 显示最新模型报告准确率和错例数量；报告路径由 helper 返回，后续可在 UI 展开显示。
 - 保留一键回滚入口。
 
 ### P2：服务器端模型训练和发布
@@ -305,9 +322,17 @@ http://SERVER:8000/review
 
 ## 当前仓库状态备注
 
-截至 2026-06-09，当前工作区还有 Windows 主窗口和测试相关未提交改动：
+截至 2026-06-10，当前工作区还有 Memo Library intent reliability、Windows 主窗口、AI 指令诊断闭环和测试相关未提交改动。
 
-- `agent/windows_main_window.py`
-- `test/test_windows_main_window.py`
+已验证：
 
-这些改动属于 Windows AI 指令诊断闭环相关工作。提交前建议先跑对应测试，再检查是否需要把本文档一起提交。
+- `.\.venv\Scripts\python.exe -m unittest discover -s test -p "test_ai_intent.py" -v`
+- `.\.venv\Scripts\python.exe -m unittest discover -s test -p "test_intent_evaluation.py" -v`
+- `.\.venv\Scripts\python.exe -m unittest discover -s test -p "test_ai_handler_runtime.py" -v`
+- `.\.venv\Scripts\python.exe -m unittest discover -s test -p "test_windows_main_window.py" -v`
+- `.\.venv\Scripts\python.exe -m unittest discover -s test -p "test_runtime_composition.py" -v`
+- `.\.venv\Scripts\python.exe -m unittest discover -s test -v`：342 tests, 5 skipped
+- `.\.venv\Scripts\python.exe -m compileall -q agent test training_server tools`
+- `git diff --check`
+
+Windows 当前没有 Bash，因此 `test_run_local_script.py` 的 shell 脚本执行测试会跳过；在 Git Bash、WSL、macOS 或 Linux 环境下仍会实际运行。

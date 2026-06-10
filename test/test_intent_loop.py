@@ -47,6 +47,16 @@ class _HTTPClient:
 
 
 class IntentLoopTests(unittest.TestCase):
+    def test_run_training_loop_marks_regressed_model_activation_unsafe(self):
+        from agent.intent_loop import _model_activation_decision
+
+        decision = _model_activation_decision(
+            baseline={"accuracy": 0.9, "correct": 9, "wrong": 1, "mismatches": []},
+            candidate={"accuracy": 0.8, "correct": 8, "wrong": 2, "mismatches": [{"text": "bad"}]},
+        )
+
+        self.assertFalse(decision["should_activate"])
+        self.assertEqual(decision["reason"], "candidate_regressed")
     def test_run_training_loop_uploads_syncs_and_evaluates(self):
         from agent.intent_loop import run_training_loop
         from agent.intent_overrides import find_override
@@ -111,6 +121,8 @@ class IntentLoopTests(unittest.TestCase):
             self.assertEqual(report["model"]["version"], "loop-v1")
             self.assertEqual(report["model"]["registered"], True)
             self.assertEqual(report["model_evaluation"]["report"]["intent_model_min_similarity"], 0.8)
+            self.assertTrue(report["model_activation"]["should_activate"])
+            self.assertEqual(report["model_activation"]["reason"], "candidate_ok")
             self.assertTrue(Path(report["model_evaluation"]["path"]).exists())
             self.assertEqual(model.version, "loop-v1")
             self.assertEqual(model.match("表格里查一下"), {"type": "shortcut", "name": "查找"})
