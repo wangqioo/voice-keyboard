@@ -1,6 +1,6 @@
 ﻿# Voice Keyboard 阶段开发文档
 
-更新时间：2026-06-10
+更新时间：2026-06-17
 
 本文记录 Voice Keyboard 当前阶段已经完成的工作、训练服务器现状、AI 指令纠错闭环状态，以及后续继续开发的优先级。
 
@@ -229,18 +229,31 @@ http://SERVER:8000/review
 ### Intent Accuracy Guard And Reporting
 
 - 已加入 baseline/candidate 评测报告对比 helper，输出准确率、正确数、错误数和错例数量差异，并标记 candidate 是否回退。
-- 训练闭环结果已包含 `model_activation` 决策；当前版本只报告是否建议激活，不自动回滚已写入的 `current.json`。
+- 训练闭环结果已包含 `model_activation` 决策。
+- `tools/run_intent_training_loop.py` 现在先注册 candidate 模型版本，再使用 candidate 版本路径生成评测报告；只有 candidate 不低于 baseline 时才激活为 `current.json`。
+- 如果没有提供 `--model-report-dir`，训练闭环会保留 candidate 版本但不会激活，避免未评测模型覆盖当前模型。
 - Mac 主窗口意图诊断页的模型状态会显示最新模型评测准确率和错例数。
 - 训练服务 review 页面已增加 Export Evaluation Dataset、Model Reports、Sync Status 三个静态入口。
 - Windows 当前无 Bash，`scripts/test-local.sh` 未直接执行；等价验证已用 unittest 全量、compileall 和 `git diff --check` 完成。
+
+### Memo Metadata And Local Risk Policy
+
+- Memo Store 已支持旧版 flat JSON 和新版 record JSON；`get/save/delete/keys` 保持兼容。
+- 新保存的 Memo 会写成 `{value, aliases, value_type, sensitive}` record 形态，并保留已有别名和 metadata。
+- Memo resolver 会优先使用 record 上显式保存的 `value_type`，再回退到 key/value 推断。
+- `ai_intent.memo_records()` 会优先读取 store 的 `records()`，旧 store 仍可通过 `keys/get` 回退。
+- 已新增本地高风险操作策略模块：普通 Shortcut Invocation 直接执行，高风险单操作需要确认，高风险操作在 Atomic Operation Stack 中 fail closed。
+- Instruction Mode executor 现在记录 `operation_risk`、`confirmation_triggered`、`user_cancelled`，训练样本也会写入这些字段。
+- Windows runtime 已接入高风险操作确认 adapter，通过原生确认弹窗执行；无确认 adapter 的运行路径继续 fail closed。
+
 ## 仍未完成
 
 - 服务器端尚未真正训练语义分类器或小模型。
 - 服务器端尚未形成模型版本发布机制。
 - 客户端尚未实现从服务器拉取发布模型。
-- 新模型自动激活 guard 目前是 report-only：会输出 baseline/candidate 对比和是否建议激活，但尚未阻止或回滚 `current.json` 写入。
 - 评测集规模还不足，需要真实样本继续积累。
-- 高风险操作确认策略还需要和模型置信度更清晰地关联。
+- 高风险操作确认策略还需要在真实 Windows 使用中验证，并继续和模型置信度、误触发指标关联。
+- Memo alias metadata 已有存储层，主窗口暂未提供 alias 编辑入口。
 
 ## 后续优先级
 
@@ -254,8 +267,8 @@ http://SERVER:8000/review
 ### P1：固定评测集和模型激活保护
 
 - 生成固定评测集，比较 `baseline`、`model-exact`、`model-0.8`。
-- 训练新版本后自动生成 baseline/candidate 对比摘要。已具备 report-only helper。
-- 如果新模型准确率低于当前 baseline，当前会标记 `model_activation.should_activate=false`；下一步需要把它接到真正激活/回滚流程。
+- 训练新版本后自动生成 baseline/candidate 对比摘要。
+- 如果新模型准确率低于当前 baseline，训练闭环会标记 `model_activation.should_activate=false`，并保持当前 `current.json` 不变。
 - 如果错例数量增加，提示人工检查。
 - 在 UI 显示最新模型报告准确率和错例数量；报告路径由 helper 返回，后续可在 UI 展开显示。
 - 保留一键回滚入口。
@@ -280,8 +293,8 @@ http://SERVER:8000/review
 
 - 发送、删除、关闭窗口、提交表单等操作继续保留确认策略。
 - 本地模型命中但属于高风险操作时，不直接绕过确认。
-- 在样本中记录是否触发确认、用户是否取消。
-- 把“误触发高风险操作”作为单独评测指标。
+- 样本已开始记录是否触发确认、用户是否取消。
+- 下一步把“误触发高风险操作”作为单独评测指标，并在诊断页展示。
 
 ## 关键风险
 
@@ -314,15 +327,16 @@ http://SERVER:8000/review
 
 1. 在 Windows 上继续真实使用，积累至少 50 条已纠正样本。
 2. 用固定评测集比较 baseline 和候选模型。
-3. 补齐模型自动激活 guard：候选模型低于 baseline 时不激活。
-4. 在服务器上做第一版语义分类器或小模型训练实验。
-5. 建立服务端模型版本发布接口。
-6. 让客户端拉取服务器发布模型，并保留本地回滚。
-7. 把高风险操作确认策略纳入评测指标。
+3. 在 Windows 上真实验证高风险确认弹窗，确认 `发送/提交/关闭/删除` 类操作不会误触发。
+4. 给 Memo Library 增加 alias 编辑入口。
+5. 在服务器上做第一版语义分类器或小模型训练实验。
+6. 建立服务端模型版本发布接口。
+7. 让客户端拉取服务器发布模型，并保留本地回滚。
+8. 把高风险操作确认策略纳入评测指标。
 
 ## 当前仓库状态备注
 
-截至 2026-06-10，当前工作区还有 Memo Library intent reliability、Windows 主窗口、AI 指令诊断闭环和测试相关未提交改动。
+截至 2026-06-17，模型激活 guard、Memo metadata、本地高风险策略和 Windows 高风险确认 adapter 已提交到本地 `main`，尚未推送远端。
 
 已验证：
 
@@ -333,6 +347,14 @@ http://SERVER:8000/review
 - `.\.venv\Scripts\python.exe -m unittest discover -s test -p "test_runtime_composition.py" -v`
 - `.\.venv\Scripts\python.exe -m unittest discover -s test -v`：342 tests, 5 skipped
 - `.\.venv\Scripts\python.exe -m compileall -q agent test training_server tools`
+- `git diff --check`
+- `/Users/wq/voice-keyboard/.venv/bin/python -m unittest discover -s test -p "test_intent_loop.py" -v`
+- `/Users/wq/voice-keyboard/.venv/bin/python -m unittest discover -s test -p "test_memo_store.py" -v`
+- `/Users/wq/voice-keyboard/.venv/bin/python -m unittest discover -s test -p "test_instruction_executor.py" -v`
+- `/Users/wq/voice-keyboard/.venv/bin/python -m unittest discover -s test -p "test_operation_confirmation.py" -v`
+- `/Users/wq/voice-keyboard/.venv/bin/python -m unittest discover -s test -p "test_runtime_composition.py" -v`
+- `/Users/wq/voice-keyboard/.venv/bin/python -m unittest discover -s test -p "test_ai_handler_runtime.py" -v`
+- `/Users/wq/voice-keyboard/.venv/bin/python -m compileall -q agent training_server tools test`
 - `git diff --check`
 
 Windows 当前没有 Bash，因此 `test_run_local_script.py` 的 shell 脚本执行测试会跳过；在 Git Bash、WSL、macOS 或 Linux 环境下仍会实际运行。

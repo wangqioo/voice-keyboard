@@ -43,7 +43,9 @@ Initial implementation:
 - `AIHandler` now dispatches typed Voice Text Operation values instead of raw classifier dictionaries.
 - Instruction Mode execution now lives behind an executor seam, leaving `AIHandler` focused on runtime orchestration.
 - Memo Operation rules and Memo key matching now live behind a Memo module; the executor only applies insert/show results to the Input Environment.
+- Memo Store now supports metadata records with aliases, value type, and sensitivity while keeping the legacy key/value interface compatible for existing UI callers.
 - Text Revision and Text Removal use structured Replacement Plans for selected text and whole-scope requests instead of full-context rewrites.
+- Instruction Mode execution now applies local high-risk operation policy before Shortcut Invocation: high-risk single operations require confirmation, and high-risk operations in future Atomic Operation Stack execution fail closed until a separate stack confirmation design exists.
 - Atomic Operation Stack support should be a later slice after stack data structures, local risk policy, and executor sequencing exist. Until then, the classifier should ask users to split explicit multi-step instructions.
 
 ## 3. Application Shortcut Catalog
@@ -61,6 +63,7 @@ Initial implementation:
 - macOS system window actions are exposed as built-in System Actions and execute through Accessibility frame updates.
 - The macOS menu bar UI now includes a `快捷键` tab for catalog visibility, disabling/restoring named actions, and adding custom global shortcut actions.
 - `agent.local_operation_catalog` now owns catalog entry metadata, de-duplication, blocking, and high-risk policy decisions.
+- `agent.local_operation_policy` now owns execution-time high-risk policy decisions, keeping provider output from bypassing local confirmation rules.
 - `agent.app_launcher` now owns application-launch discovery, aliases, config parsing, and launch execution.
 - `agent.macos_window_actions` now owns macOS window action dispatch through Accessibility frame updates.
 - `agent.typer` still owns key parsing and key emission while delegating catalog policy, app launch, and window actions to deeper modules.
@@ -120,5 +123,7 @@ Initial implementation:
 
 - `agent/runtime_composition.py`
 - `agent/dictation_mode.py`
+- `agent/operation_confirmation.py`
 - Desktop `agent.main` and `agent.windows_tray` now use the Runtime Composition module for backend lifecycle construction.
 - Dictation Mode interpretation, cleanup, status, history, and insertion now live behind a dedicated module while `agent.main` preserves the older callback factory.
+- Runtime Composition now injects a platform operation-confirmation adapter into Instruction Mode when available. Windows uses a native confirmation prompt for high-risk operations; headless and unsupported platforms continue to fail closed unless a caller supplies a confirmation adapter.
