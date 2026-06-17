@@ -118,6 +118,19 @@ class MemoStore:
             )
             self._save()
 
+    def save_record(self, key: str, value: str, *, aliases: tuple[str, ...] = ()) -> None:
+        with self._lock:
+            self._reload_if_changed()
+            existing = self._data.get(key)
+            self._data[key] = MemoRecord(
+                key=key,
+                value=value,
+                aliases=_normalized_aliases(aliases),
+                value_type=existing.value_type if existing is not None else "",
+                sensitive=existing.sensitive if existing is not None else False,
+            )
+            self._save()
+
     def get(self, key: str) -> Optional[str]:
         with self._lock:
             self._reload_if_changed()
@@ -142,3 +155,12 @@ class MemoStore:
         with self._lock:
             self._reload_if_changed()
             return tuple(self._data.values())
+
+
+def _normalized_aliases(raw_aliases: tuple[str, ...]) -> tuple[str, ...]:
+    aliases = []
+    for alias in raw_aliases:
+        text = str(alias or "").strip()
+        if text and text not in aliases:
+            aliases.append(text)
+    return tuple(aliases)

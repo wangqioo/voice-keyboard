@@ -35,6 +35,16 @@ class WindowsMainWindowTests(unittest.TestCase):
             ["\u8bb0\u4e00\u4e0b", "\u8bb0\u4f4f", "\u5907\u5fd8", "\u6536\u4e00\u4e0b"],
         )
 
+    def test_memo_alias_text_joins_record_aliases(self):
+        from agent.memo import MemoRecord
+        from agent.windows_main_window import _memo_alias_text
+
+        self.assertEqual(
+            _memo_alias_text(MemoRecord("工作邮箱", aliases=("邮箱", "email"))),
+            "邮箱, email",
+        )
+        self.assertEqual(_memo_alias_text(None), "")
+
     def test_format_sync_evaluation_message_for_local_loop(self):
         from agent.windows_main_window import format_sync_evaluation_message
 

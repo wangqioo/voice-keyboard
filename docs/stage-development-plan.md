@@ -242,6 +242,7 @@ http://SERVER:8000/review
 - 新保存的 Memo 会写成 `{value, aliases, value_type, sensitive}` record 形态，并保留已有别名和 metadata。
 - Memo resolver 会优先使用 record 上显式保存的 `value_type`，再回退到 key/value 推断。
 - `ai_intent.memo_records()` 会优先读取 store 的 `records()`，旧 store 仍可通过 `keys/get` 回退。
+- Windows 主窗口 Memo Library 已提供 alias 编辑入口，保存时会写入 aliases 并保留 `value_type/sensitive` metadata。
 - 已新增本地高风险操作策略模块：普通 Shortcut Invocation 直接执行，高风险单操作需要确认，高风险操作在 Atomic Operation Stack 中 fail closed。
 - Instruction Mode executor 现在记录 `operation_risk`、`confirmation_triggered`、`user_cancelled`，训练样本也会写入这些字段。
 - Windows runtime 已接入高风险操作确认 adapter，通过原生确认弹窗执行；无确认 adapter 的运行路径继续 fail closed。
@@ -253,7 +254,6 @@ http://SERVER:8000/review
 - 客户端尚未实现从服务器拉取发布模型。
 - 评测集规模还不足，需要真实样本继续积累。
 - 高风险操作确认策略还需要在真实 Windows 使用中验证，并继续和模型置信度、误触发指标关联。
-- Memo alias metadata 已有存储层，主窗口暂未提供 alias 编辑入口。
 
 ## 后续优先级
 
@@ -328,11 +328,10 @@ http://SERVER:8000/review
 1. 在 Windows 上继续真实使用，积累至少 50 条已纠正样本。
 2. 用固定评测集比较 baseline 和候选模型。
 3. 在 Windows 上真实验证高风险确认弹窗，确认 `发送/提交/关闭/删除` 类操作不会误触发。
-4. 给 Memo Library 增加 alias 编辑入口。
-5. 在服务器上做第一版语义分类器或小模型训练实验。
-6. 建立服务端模型版本发布接口。
-7. 让客户端拉取服务器发布模型，并保留本地回滚。
-8. 把高风险操作确认策略纳入评测指标。
+4. 在服务器上做第一版语义分类器或小模型训练实验。
+5. 建立服务端模型版本发布接口。
+6. 让客户端拉取服务器发布模型，并保留本地回滚。
+7. 把高风险操作确认策略纳入评测指标。
 
 ## 当前仓库状态备注
 

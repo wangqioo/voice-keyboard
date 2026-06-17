@@ -19,6 +19,7 @@ from agent.intent_loop import run_training_loop
 from agent.intent_model_ui import get_model_status, rollback_model_for_ui, train_local_model_for_ui
 from agent.intent_sync import sync_local_corrected_intents
 from agent.intent_training import load_samples
+from agent.memo import MemoRecord
 from agent.memo_store import MemoStore
 
 
@@ -118,6 +119,12 @@ def _split_words(raw: str) -> list[str]:
     return [item.strip() for item in text.split(",") if item.strip()]
 
 
+def _memo_alias_text(record: MemoRecord | None) -> str:
+    if record is None:
+        return ""
+    return ", ".join(record.aliases)
+
+
 def _language() -> str:
     ui = (_read_config().get("ui") or {})
     return "en" if str(ui.get("language", "zh")).lower().startswith("en") else "zh"
@@ -163,7 +170,7 @@ class WindowsMainWindow:
         self._history_rows: list[dict] = []
         self._intent_rows: list[tuple[int, dict]] = []
         self._memo_keys: list[str] = []
-        self._memo_snapshot: dict[str, str] = {}
+        self._memo_snapshot: dict[str, tuple[str, str]] = {}
         self._memo_poll_after_id = None
         self._vars: dict[str, tk.StringVar] = {}
         self._history.add_listener(lambda _entry: self._queue.put("history"))
@@ -450,6 +457,9 @@ class WindowsMainWindow:
         ttk.Label(right, text=self._t("\u540d\u79f0", "Name")).pack(anchor="w")
         self._memo_key = tk.StringVar()
         ttk.Entry(right, textvariable=self._memo_key).pack(fill="x", pady=(0, 8))
+        ttk.Label(right, text=self._t("\u522b\u540d", "Aliases")).pack(anchor="w")
+        self._memo_aliases = tk.StringVar()
+        ttk.Entry(right, textvariable=self._memo_aliases).pack(fill="x", pady=(0, 8))
         ttk.Label(right, text=self._t("\u5185\u5bb9", "Value")).pack(anchor="w")
         self._memo_text = tk.Text(right, height=18, wrap="word")
         self._memo_text.pack(fill="both", expand=True)
@@ -856,12 +866,18 @@ class WindowsMainWindow:
             current_key = self._memo_key.get().strip() if hasattr(self, "_memo_key") else ""
             self._replace_memo_list(sorted(snapshot.keys()), selected_key=current_key, snapshot=snapshot)
             if current_key in snapshot:
-                self._set_text(self._memo_text, snapshot[current_key])
+                self._load_memo_fields(current_key)
 
-    def _memo_snapshot_from_store(self) -> dict[str, str]:
-        return {key: self._memo.get(key) or "" for key in self._memo.keys()}
+    def _memo_snapshot_from_store(self) -> dict[str, tuple[str, str]]:
+        return {record.key: (record.value, _memo_alias_text(record)) for record in self._memo.records()}
 
-    def _replace_memo_list(self, keys: list[str], *, selected_key: str = "", snapshot: dict[str, str] | None = None) -> None:
+    def _memo_record(self, key: str) -> MemoRecord | None:
+        for record in self._memo.records():
+            if record.key == key:
+                return record
+        return None
+
+    def _replace_memo_list(self, keys: list[str], *, selected_key: str = "", snapshot: dict[str, tuple[str, str]] | None = None) -> None:
         self._memo_keys = keys
         self._memo_snapshot = dict(snapshot or {})
         self._memo_list.delete(0, "end")
@@ -894,20 +910,27 @@ class WindowsMainWindow:
         if not sel:
             return
         key = self._memo_keys[sel[0]]
+        self._load_memo_fields(key)
+
+    def _load_memo_fields(self, key: str) -> None:
+        record = self._memo_record(key)
         self._memo_key.set(key)
-        self._set_text(self._memo_text, self._memo.get(key) or "")
+        self._memo_aliases.set(_memo_alias_text(record))
+        self._set_text(self._memo_text, "" if record is None else record.value)
 
     def _new_memo(self) -> None:
         self._memo_key.set("")
+        self._memo_aliases.set("")
         self._set_text(self._memo_text, "")
 
     def _save_memo(self) -> None:
         key = self._memo_key.get().strip()
+        aliases = tuple(_split_words(self._memo_aliases.get()))
         value = self._memo_text.get("1.0", "end").strip()
         if not key:
             messagebox.showwarning("Voice Keyboard", self._t("\u8bf7\u586b\u5199\u540d\u79f0", "Name is required"))
             return
-        self._memo.save(key, value)
+        self._memo.save_record(key, value, aliases=aliases)
         self._refresh_memo()
         self._notify_text(self._t("\u5df2\u4fdd\u5b58\u8bb0\u5fc6", "Memo saved"))
 
