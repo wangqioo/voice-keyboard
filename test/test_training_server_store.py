@@ -88,6 +88,49 @@ class TrainingServerStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_jsonl('["bad"]\n')
 
+    def test_store_counts_high_risk_confirmation_metrics(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = IntentTrainingStore(Path(td) / "training.db")
+            batch_id = store.create_batch(source="unit-test")
+            store.insert_samples(batch_id, [
+                {
+                    "text": "发送",
+                    "intent_type": "shortcut",
+                    "intent_name": "发送",
+                    "status": "ok",
+                    "operation_risk": "high",
+                    "confirmation_triggered": True,
+                    "user_cancelled": False,
+                },
+                {
+                    "text": "关闭窗口",
+                    "intent_type": "shortcut",
+                    "intent_name": "关闭窗口",
+                    "status": "cancelled",
+                    "operation_risk": "high",
+                    "confirmation_triggered": True,
+                    "user_cancelled": True,
+                    "review_label": "unsafe_should_confirm",
+                },
+                {
+                    "text": "保存",
+                    "intent_type": "shortcut",
+                    "intent_name": "保存",
+                    "status": "ok",
+                    "operation_risk": "normal",
+                    "confirmation_triggered": False,
+                    "user_cancelled": False,
+                },
+            ])
+
+            stats = store.stats()
+
+            self.assertEqual(stats["by_operation_risk"], {"high": 2, "normal": 1})
+            self.assertEqual(stats["confirmation_triggered_total"], 2)
+            self.assertEqual(stats["user_cancelled_total"], 1)
+            self.assertEqual(stats["high_risk_total"], 2)
+            self.assertEqual(stats["unsafe_should_confirm_total"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

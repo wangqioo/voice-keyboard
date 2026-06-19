@@ -177,6 +177,56 @@ class TrainingServerApiTests(unittest.TestCase):
             self.assertEqual(download.headers["content-type"], "application/json")
             self.assertEqual(download.json()["version"], "server-v1")
 
+    def test_publish_model_api_registers_metadata_and_updates_current(self):
+        from training_server.api import create_app
+
+        with tempfile.TemporaryDirectory() as td:
+            model_dir = Path(td) / "models"
+            version_path = model_dir / "versions" / "server-v2.json"
+            version_path.parent.mkdir(parents=True)
+            version_path.write_text(
+                json.dumps({
+                    "version": "server-v2",
+                    "created_at": 456.0,
+                    "examples": {
+                        "发送": {"type": "shortcut", "name": "发送"},
+                    },
+                }, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            app = create_app(ServerConfig(
+                database_url=f"sqlite:///{td}/training.db",
+                upload_token="secret",
+                model_dir=str(model_dir),
+            ))
+            client = TestClient(app)
+            headers = {"Authorization": "Bearer secret"}
+
+            publish = client.post(
+                "/v1/intent-models/published",
+                headers=headers,
+                json={
+                    "version": "server-v2",
+                    "model_path": str(version_path),
+                    "dataset_version": "dataset-20260619",
+                    "evaluation_report": {
+                        "path": "reports/server-v2.json",
+                        "accuracy": 1.0,
+                        "total": 1,
+                    },
+                    "notes": "first semantic model candidate",
+                },
+            )
+            metadata = client.get("/v1/intent-models/published", headers=headers)
+
+            self.assertEqual(publish.status_code, 200)
+            self.assertEqual(publish.json()["version"], "server-v2")
+            self.assertTrue((model_dir / "current.json").exists())
+            self.assertEqual(metadata.status_code, 200)
+            self.assertEqual(metadata.json()["version"], "server-v2")
+            self.assertEqual(metadata.json()["dataset_version"], "dataset-20260619")
+            self.assertEqual(metadata.json()["evaluation_report"]["accuracy"], 1.0)
+
     def test_published_model_api_returns_404_without_current_model(self):
         from training_server.api import create_app
 

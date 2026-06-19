@@ -252,10 +252,10 @@ http://SERVER:8000/review
 ## 仍未完成
 
 - 服务器端尚未真正训练语义分类器或小模型。
-- 服务器端尚未形成模型版本发布机制。
-- 客户端尚未实现从服务器拉取发布模型。
+- 服务器端已形成 `current.json` 发布接口、发布登记 sidecar 和发布历史 JSONL；仍未接入真正的服务端训练作业。
+- 客户端已实现从服务器拉取发布模型；仍需要在真实部署上跑一次端到端拉取和回滚演练。
 - 评测集规模还不足，需要真实样本继续积累。
-- 高风险操作确认策略还需要在真实 Windows 使用中验证，并继续和模型置信度、误触发指标关联。
+- 高风险操作确认策略还需要在真实 Windows 使用中验证；服务端样本统计已开始结构化记录 `operation_risk`、`confirmation_triggered`、`user_cancelled` 和 `unsafe_should_confirm` 指标。
 
 ## 后续优先级
 
@@ -320,7 +320,9 @@ http://SERVER:8000/review
 
 ### API-Key 安全
 
-仓库不能提交真实 API-Key 或训练服务器 token。后续所有密钥都应通过环境变量、本地配置文件或企业密钥管理系统注入。
+仓库不能提交真实 API-Key 或训练服务器 token。本机 `~/.voice-keyboard/config.yaml`
+已改为 `$GLM_API_KEY` 引用，真实值放在用户目录 `.env`；后续可用
+`tools/check_config_hygiene.py --config ~/.voice-keyboard/config.yaml` 检查 YAML 是否还有明文密钥。
 
 ### 高风险操作
 
@@ -332,8 +334,8 @@ http://SERVER:8000/review
 2. 用固定评测集比较 baseline 和候选模型。
 3. 在 Windows 上真实验证高风险确认弹窗，确认 `发送/提交/关闭/删除` 类操作不会误触发。
 4. 在服务器上做第一版语义分类器或小模型训练实验。
-5. 建立服务端模型版本、训练数据版本和评测报告登记。
-6. 把高风险操作确认策略纳入评测指标。
+5. 在真实训练服务器上发布一个通过 guard 的模型版本，并确认 `published_history.jsonl`、`current.meta.json` 和客户端 `pull-published` 都可用。
+6. 在诊断页展示高风险误触发指标。
 
 ## 当前仓库状态备注
 

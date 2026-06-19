@@ -61,9 +61,10 @@ class IntentTrainingStore:
                         batch_id, created_at, ts, text, text_hash, active_application,
                         has_selection, selected_length, has_recent_text, recent_text_length,
                         shortcut_count, intent_type, intent_name, intent_key,
-                        intent_source, intent_confidence, intent_cache_hit,
-                        status, detail, review_label, review_note, corrected_intent_json, raw_json
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    intent_source, intent_confidence, intent_cache_hit,
+                    status, detail, review_label, review_note, corrected_intent_json,
+                    operation_risk, confirmation_triggered, user_cancelled, raw_json
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         batch_id,
@@ -88,6 +89,9 @@ class IntentTrainingStore:
                         normalized["review_label"],
                         normalized["review_note"],
                         json.dumps(normalized["corrected_intent"], ensure_ascii=False),
+                        normalized["operation_risk"],
+                        _nullable_bool_int(normalized["confirmation_triggered"]),
+                        _nullable_bool_int(normalized["user_cancelled"]),
                         json.dumps(sample, ensure_ascii=False),
                     ),
                 )
@@ -237,6 +241,11 @@ class IntentTrainingStore:
             by_source = _count_rows(conn, "intent_source")
             by_status = _count_rows(conn, "status")
             by_review = _count_rows(conn, "review_label")
+            by_operation_risk = _count_rows(conn, "operation_risk")
+            confirmation_triggered_total = _count_where(conn, "confirmation_triggered = 1")
+            user_cancelled_total = _count_where(conn, "user_cancelled = 1")
+            high_risk_total = _count_where(conn, "operation_risk = 'high'")
+            unsafe_should_confirm_total = _count_where(conn, "review_label = 'unsafe_should_confirm'")
             corrected_rows = conn.execute(
                 """
                 select corrected_intent_json from samples
@@ -271,6 +280,11 @@ class IntentTrainingStore:
             "by_source": by_source,
             "by_status": by_status,
             "by_review": by_review,
+            "by_operation_risk": by_operation_risk,
+            "confirmation_triggered_total": confirmation_triggered_total,
+            "user_cancelled_total": user_cancelled_total,
+            "high_risk_total": high_risk_total,
+            "unsafe_should_confirm_total": unsafe_should_confirm_total,
             "corrected_total": corrected_total,
             "by_corrected_type": by_corrected_type,
             "top_phrases": top_phrases,
@@ -328,14 +342,21 @@ class IntentTrainingStore:
                     review_label text not null default '',
                     review_note text not null default '',
                     corrected_intent_json text not null default '{}',
+                    operation_risk text not null default '',
+                    confirmation_triggered integer,
+                    user_cancelled integer,
                     raw_json text not null default '{}',
                     foreign key(batch_id) references batches(id)
                 )
                 """
             )
             _ensure_column(conn, "samples", "corrected_intent_json", "text not null default '{}'")
+            _ensure_column(conn, "samples", "operation_risk", "text not null default ''")
+            _ensure_column(conn, "samples", "confirmation_triggered", "integer")
+            _ensure_column(conn, "samples", "user_cancelled", "integer")
             conn.execute("create index if not exists idx_samples_intent on samples(intent_type)")
             conn.execute("create index if not exists idx_samples_review on samples(review_label)")
+            conn.execute("create index if not exists idx_samples_operation_risk on samples(operation_risk)")
             conn.execute("create index if not exists idx_samples_hash on samples(text_hash)")
 
     def close(self) -> None:
@@ -378,6 +399,9 @@ def _normalize_sample(sample: dict) -> dict:
         "review_label": str(sample.get("review_label") or ""),
         "review_note": str(sample.get("review_note") or ""),
         "corrected_intent": _normalize_corrected_intent(sample.get("corrected_intent")),
+        "operation_risk": str(sample.get("operation_risk") or ""),
+        "confirmation_triggered": _normalize_optional_bool(sample.get("confirmation_triggered")),
+        "user_cancelled": _normalize_optional_bool(sample.get("user_cancelled")),
     }
 
 
@@ -398,6 +422,10 @@ def _count_rows(conn: sqlite3.Connection, column: str) -> dict:
     return {str(row[0]): int(row[1]) for row in rows}
 
 
+def _count_where(conn: sqlite3.Connection, where: str) -> int:
+    return int(conn.execute(f"select count(*) from samples where {where}").fetchone()[0])
+
+
 def _count_rows_for_text(conn: sqlite3.Connection, column: str, text: str) -> dict:
     rows = conn.execute(
         f"""
@@ -415,6 +443,18 @@ def _normalize_corrected_intent(value) -> dict:
     if isinstance(value, dict):
         return value
     return {}
+
+
+def _normalize_optional_bool(value) -> bool | None:
+    if value is None:
+        return None
+    return bool(value)
+
+
+def _nullable_bool_int(value: bool | None) -> int | None:
+    if value is None:
+        return None
+    return int(value)
 
 
 def _parse_json_object(text: str) -> dict:
