@@ -215,7 +215,8 @@ correction_memory:
 # 打字与自定义快捷键
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 typing:
-  method: unicode            # unicode 或 clip
+  method: unicode            # unicode=逐步输出；clip=整段剪贴板粘贴
+  key_delay_ms: 3            # unicode 模式每个字符后的停顿，越小输出越快
   shortcuts:
     # 全局快捷键：语音说“刷新”时向当前活动应用发送 Cmd+R。
     # 普通用户优先在菜单栏 Voice Keyboard -> 快捷键... 里修改。

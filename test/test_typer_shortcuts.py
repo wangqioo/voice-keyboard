@@ -1099,16 +1099,40 @@ class TyperShortcutTests(unittest.TestCase):
         self.assertNotIn("新标签", names)
         self.assertNotIn("关闭标签", names)
 
+    def test_init_configures_key_delay(self):
+        with (
+            patch.object(typer, "_load_blocked_shortcuts"),
+            patch.object(typer, "_load_custom_shortcuts"),
+            patch.object(typer, "_load_app_shortcuts"),
+            patch.object(typer, "_configured_app_shortcuts", return_value={}),
+            patch.object(typer.app_launcher, "load_app_launches"),
+        ):
+            typer.init({"method": "unicode", "key_delay_ms": 5})
+
+        self.assertEqual(typer._key_delay_seconds, 0.005)
+
+    def test_init_uses_fast_default_key_delay(self):
+        with (
+            patch.object(typer, "_load_blocked_shortcuts"),
+            patch.object(typer, "_load_custom_shortcuts"),
+            patch.object(typer, "_load_app_shortcuts"),
+            patch.object(typer, "_configured_app_shortcuts", return_value={}),
+            patch.object(typer.app_launcher, "load_app_launches"),
+        ):
+            typer.init({"method": "unicode"})
+
+        self.assertEqual(typer._key_delay_seconds, 0.003)
+
     def test_macos_clip_method_pastes_text(self):
         with (
             patch.object(typer, "_OS", "Darwin"),
             patch.object(typer, "_use_clipboard_mode", True),
-            patch.object(typer, "replace_selection") as replace_selection,
+            patch.object(typer, "paste_text") as paste_text,
             patch.object(typer, "_type_via_quartz") as type_via_quartz,
         ):
             typer.type_text("hello")
 
-        replace_selection.assert_called_once_with("hello")
+        paste_text.assert_called_once_with("hello")
         type_via_quartz.assert_not_called()
 
     def test_macos_unicode_method_types_directly(self):

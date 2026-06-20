@@ -238,7 +238,9 @@ class _SettingsTab(NSObject):
         tm.addItemWithTitle_("clip")
         doc.addSubview_(tm)
         self._fields["typing.method"] = tm
-        y += 44
+        y += 32
+        row("typing.key_delay_ms", "typing.key_delay_ms", "3", w=120)
+        y += 12
 
         # 保存按钮
         save = _button("保存并热重载", NSMakeRect(180, y, 180, 32), self, b"save:")

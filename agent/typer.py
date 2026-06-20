@@ -137,6 +137,7 @@ if _OS == "Windows":
 _erasing: bool = False
 _simulating: bool = False   # 程序自己发 Cmd+C/V 等按键时置 True，让 PTT 监听忽略
 _use_clipboard_mode: bool = False
+_key_delay_seconds: float = 0.003
 _last_focus_fallback_log: tuple[str, int | None] | None = None
 _BLOCKED_SHORTCUT_NAMES: set[str] = set()
 _BLOCKED_SHORTCUT_KEY_SEQUENCES: set[tuple[str, ...]] = set()
@@ -160,10 +161,17 @@ ApplicationLaunchSpec = app_launcher.ApplicationLaunchSpec
 
 def init(cfg: dict) -> None:
     """由 main.py 在启动时调用，根据 config.yaml 的 typing.method 配置打字方式。"""
-    global _use_clipboard_mode
+    global _use_clipboard_mode, _key_delay_seconds
     _use_clipboard_mode = cfg.get("method", "unicode") == "clip"
+    try:
+        delay_ms = float(cfg.get("key_delay_ms", 3))
+    except (TypeError, ValueError):
+        delay_ms = 3.0
+    _key_delay_seconds = max(0.0, delay_ms) / 1000.0
     if _use_clipboard_mode:
         print("[typer] 剪贴板粘贴模式")
+    else:
+        print(f"[typer] 直接打字模式 key_delay_ms={_key_delay_seconds * 1000:.1f}")
     _load_blocked_shortcuts(cfg)
     _load_custom_shortcuts(cfg.get("shortcuts", {}))
     _APP_SHORTCUTS.clear()
@@ -239,7 +247,7 @@ def type_text(text: str) -> None:
     if not text:
         return
     if _use_clipboard_mode and _OS != "Windows":
-        replace_selection(text)
+        paste_text(text)
         return
     if _OS == "Darwin":
         _type_via_quartz(text)
@@ -462,7 +470,30 @@ def confirm_paste_without_focused_input(text: str) -> bool:
 
 
 def paste_text(text: str) -> None:
-    replace_selection(text)
+    if _OS == "Windows":
+        _type_via_clipboard_win(text)
+        return
+    global _simulating
+    _set_clipboard(text)
+    time.sleep(0.03)
+    _simulating = True
+    try:
+        if _OS == "Darwin":
+            _kb.press(Key.cmd)
+            try:
+                _press_key(KeyCode.from_char("v"))
+            finally:
+                _kb.release(Key.cmd)
+        else:
+            _kb.press(Key.ctrl)
+            try:
+                _press_key(KeyCode.from_char("v"))
+            finally:
+                _kb.release(Key.ctrl)
+        time.sleep(0.05)
+    finally:
+        _simulating = False
+    time.sleep(0.03)
 
 
 def copy_to_clipboard(text: str) -> None:
@@ -481,7 +512,7 @@ def _type_via_quartz(text: str) -> None:
             evt = Quartz.CGEventCreateKeyboardEvent(src, 0, key_down)
             Quartz.CGEventKeyboardSetUnicodeString(evt, len(char), char)
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, evt)
-        time.sleep(0.012)
+        time.sleep(_key_delay_seconds)
 
 
 def _type_via_sendinput(text: str) -> None:
@@ -504,7 +535,7 @@ def _type_via_sendinput(text: str) -> None:
                     ),
                 )
                 _user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
-        time.sleep(0.012)
+        time.sleep(_key_delay_seconds)
 
 
 def _type_via_clipboard_win(text: str) -> None:
@@ -523,7 +554,7 @@ def _type_via_xtest(text: str) -> None:
     # Linux：pynput 逐字，底层走 X11 XTest，绕过 IME
     for char in text:
         _kb.type(char)
-        time.sleep(0.012)
+        time.sleep(_key_delay_seconds)
 
 
 # ── 退格擦除 ──────────────────────────────────────────────────────
