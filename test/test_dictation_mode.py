@@ -244,6 +244,22 @@ class DictationModeModuleTests(unittest.TestCase):
         history.append.assert_called_once_with("dictate", "hello", "error", "typing: blocked")
         status.set_state.assert_called_once_with("error_typing")
 
+    def test_failed_insertion_reports_single_error_typing_span(self):
+        module, _stt, env, _status, _history = self.make_module("hello")
+        perf = FakePerformance()
+        module.performance = perf
+        env.insert_output_text.return_value = TextInsertionResult(failure="no_focused_input")
+
+        module.handle_utterance(b"pcm")
+
+        typing_finishes = [
+            fields
+            for span, fields in perf.finished
+            if span == "dictation.typing"
+        ]
+        self.assertEqual(len(typing_finishes), 1)
+        self.assertEqual(typing_finishes[0]["error"], "RuntimeError")
+
     def test_copied_no_focus_output_is_not_recorded_as_typing_error(self):
         module, _stt, env, status, history = self.make_module("hello")
         env.insert_output_text.return_value = MagicMock(

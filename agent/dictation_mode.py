@@ -200,14 +200,15 @@ class DictationMode:
         try:
             typing_span = self._performance().span("dictation.typing")
             result = self.input_environment.insert_output_text(text)
-            self._performance().finish(typing_span, chars=len(text))
             if not result.ok:
                 if result.failure == "copied_to_clipboard":
+                    self._performance().finish(typing_span, chars=len(text))
                     self._append_history(mode, text, "copied", "no_focused_input")
                     self._show_copied_message(result.copied_text or text)
                     self._performance().finish(total_span, status="copied")
                     return
                 raise RuntimeError(result.failure or "insert_failed")
+            self._performance().finish(typing_span, chars=len(text))
         except Exception as e:
             self._performance().finish(
                 typing_span,
