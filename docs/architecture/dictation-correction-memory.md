@@ -40,6 +40,11 @@ Observation sources are ordered by reliability:
 
 The inference step extracts wrong-to-correct pairs from the before/after text. Repeated evidence creates or updates Correction Candidates. Once evidence reaches `correction_memory.confirm_threshold`, the pair becomes a confirmed Correction Dictionary entry and is applied to later Dictation text.
 
+Automatic learning is scoped to short Chinese correction fragments. A valid pair
+must be 2 to 5 CJK characters on both sides. This covers names, ordinary words,
+short terms, and most idioms while avoiding long sentence replacements. Ordinary
+English word corrections are not learned automatically.
+
 ## Configuration
 
 ```yaml

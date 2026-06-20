@@ -29,6 +29,21 @@ class CorrectionMemoryTests(unittest.TestCase):
             (),
         )
 
+    def test_does_not_store_more_than_five_character_terms(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            memory = CorrectionMemory(Path(tmp) / "correction.json", confirm_threshold=1)
+
+            learned = memory.learn("中华人民共和国", "中华人民共和果")
+
+            self.assertIsNone(learned)
+            self.assertEqual(memory.entries, ())
+
+    def test_does_not_learn_english_word_corrections(self):
+        self.assertEqual(
+            infer_correction_pairs("codex codex", "codecs codecs"),
+            (),
+        )
+
     def test_does_not_infer_mixed_pinyin_or_symbol_candidate(self):
         self.assertEqual(
             infer_correction_pairs("宋海丽，宋海丽，宋海丽", "宋海丽，宋海丽，宋海cao"),

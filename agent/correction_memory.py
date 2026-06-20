@@ -20,6 +20,8 @@ from typing import Callable, Iterable
 
 
 _DEFAULT_PATH = Path.home() / ".voice-keyboard" / "correction_memory.json"
+_MIN_TERM_LENGTH = 2
+_MAX_TERM_LENGTH = 5
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 _CJK_TERM_RE = re.compile(r"^[\u3400-\u9fff]+$")
 _SPACE_RE = re.compile(r"\s")
@@ -1189,9 +1191,9 @@ def _best_after_segment(before: str, after: str) -> str:
 def _valid_pair(wrong: str, correct: str) -> bool:
     if not wrong or not correct or wrong == correct:
         return False
-    if len(wrong) < 2 or len(correct) < 2:
+    if len(wrong) < _MIN_TERM_LENGTH or len(correct) < _MIN_TERM_LENGTH:
         return False
-    if len(wrong) > 12 or len(correct) > 12:
+    if len(wrong) > _MAX_TERM_LENGTH or len(correct) > _MAX_TERM_LENGTH:
         return False
     if _SPACE_RE.search(wrong) or _SPACE_RE.search(correct):
         return False

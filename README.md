@@ -172,6 +172,11 @@ can be learned locally and applied before future dictation text reaches the
 current input field. The macOS UI includes a `词典` tab for confirmed and
 candidate entries.
 
+Correction entries are intentionally narrow: automatic learning only accepts
+Chinese wrong-to-correct fragments from 2 to 5 characters. Longer sentence-like
+replacements and ordinary English word corrections are ignored to reduce
+accidental global replacements.
+
 How the correction-memory loop works:
 
 1. Dictation Mode recognizes speech and applies existing Correction Dictionary entries before insertion.
