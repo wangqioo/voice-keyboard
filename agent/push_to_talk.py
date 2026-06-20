@@ -48,9 +48,10 @@ def _parse_keys(key_input) -> list:
 class PushToTalk:
     def __init__(
         self,
-        on_utterance:      Callable[[bytes], None],
+        on_utterance:      Optional[Callable[[bytes], None]] = None,
         on_edit_utterance: Optional[Callable[[bytes], None]] = None,
         on_ai_utterance:   Optional[Callable[[bytes], None]] = None,
+        on_event:          Optional[Callable[[UtteranceEvent], None]] = None,
         on_ai_key_down:    Optional[Callable[[], None]] = None,
         ptt_key:           str = "right_alt",
         edit_key:          str = "right_ctrl",
@@ -64,10 +65,11 @@ class PushToTalk:
         self._on_utterance      = on_utterance
         self._on_edit_utterance = on_edit_utterance
         self._on_ai_utterance   = on_ai_utterance
+        self._on_event          = on_event
         self._on_ai_key_down    = on_ai_key_down
         self._ptt_keys          = _parse_keys(ptt_key)
         self._edit_keys         = _parse_keys(edit_key) if on_edit_utterance else []
-        self._ai_keys           = _parse_keys(ai_key)   if on_ai_utterance   else []
+        self._ai_keys           = _parse_keys(ai_key)   if (on_ai_utterance or on_event) else []
         self._toggle_keys       = _parse_keys(toggle_key) if toggle_key else []
         self._device_hint       = device
         self._status            = status_window
@@ -332,6 +334,14 @@ class PushToTalk:
             self._set_status(state)
 
     def _dispatch_utterance(self, event: UtteranceEvent, name: str) -> None:
+        if self._on_event is not None:
+            threading.Thread(
+                target=self._on_event,
+                args=(event,),
+                daemon=True,
+                name=name,
+            ).start()
+            return
         if event.mode == "dictation":
             callback = self._on_utterance
             args = (event.pcm, event.polish)

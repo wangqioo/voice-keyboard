@@ -10,6 +10,7 @@ Capture Path
   -> existing Correction Dictionary entries are applied
   -> Input Environment inserts corrected text
   -> CorrectionLearningTracker remembers the inserted text
+  -> CorrectionObservationHooks observe key, IME, and committed-text events
   -> manual edits are observed during the configured window
   -> repeated evidence promotes Correction Candidates to the Correction Dictionary
 ```
@@ -17,10 +18,12 @@ Capture Path
 The main implementation files are:
 
 - `agent/correction_memory.py`: persistence, inference, candidate promotion, tracking, and observation scheduling.
+- `agent/correction_observation.py`: small runtime-facing hooks for key presses, key releases, committed text, and scheduler shutdown.
 - `agent/dictation_mode.py`: applies the Correction Dictionary and remembers inserted Dictation text.
-- `agent/runtime_composition.py`: wires the tracker, scheduler, PushToTalk edit callbacks, and IME monitor.
-- `agent/input_environment.py` and `agent/text_io.py`: expose focused-text and screen-text snapshots for correction learning.
-- `agent/typer.py`: implements platform text snapshots behind the TextIO adapter.
+- `agent/performance_observer.py`: low-overhead stage timing for Dictation Mode.
+- `agent/runtime_composition.py`: wires the observation hooks, PushToTalk capture events, and IME monitor.
+- `agent/input_environment.py`, `agent/text_io.py`, and `agent/focused_text_capture.py`: expose focused-text and screen-text snapshots for correction learning.
+- `agent/typer.py`: implements platform typing, focused text, and OCR primitives behind adapters.
 - `agent/ime_commit_monitor.py`: observes committed IME text on macOS.
 - `agent/macos_keyboard_listener.py`: uses Quartz key events on macOS for stable hotkey and edit tracking.
 - `agent/screen_ocr_capture.py`: macOS OCR fallback when Accessibility text is unavailable or stale.
@@ -44,6 +47,11 @@ Automatic learning is scoped to short Chinese correction fragments. A valid pair
 must be 2 to 5 CJK characters on both sides. This covers names, ordinary words,
 short terms, and most idioms while avoiding long sentence replacements. Ordinary
 English word corrections are not learned automatically.
+
+With the default `confirm_threshold: 2`, the same wrong-to-correct pair usually
+needs two independent observations before it is promoted. If an entry is already
+confirmed in the dictionary, it is applied immediately on the next matching
+Dictation result.
 
 ## Configuration
 
@@ -71,6 +79,21 @@ macOS has the full learning path today:
 - Screen OCR can recover text from apps that do not expose reliable Accessibility text.
 
 Windows and Linux can still apply an existing Correction Dictionary through Dictation Mode. Full automatic learning on those platforms needs equivalent focused-text, key-edit, and IME/commit adapters.
+
+## Runtime Observability
+
+Dictation Mode emits `[perf]` lines for the main latency stages:
+
+- `dictation.observe_previous`
+- `dictation.stt`
+- `dictation.polish`
+- `dictation.correction`
+- `dictation.typing`
+- `dictation.total`
+
+Use these timings to distinguish provider latency from local typing/focus
+latency. Correction-learning capture failures are still logged separately by
+`agent/correction_memory.py` when debug or fallback paths are active.
 
 ## Test Surface
 

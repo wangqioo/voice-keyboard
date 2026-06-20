@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from agent.correction_memory import CorrectionTextSnapshot
+from agent.focused_text_capture import FocusedTextWindow
 from agent.input_environment import (
     OperationWindow,
     ReplacementPlan,
@@ -13,6 +14,7 @@ from agent.text_buffer import TextBuffer
 from agent.text_io import CaretTextWindow
 from agent.text_io import ShortcutCatalogEntry
 from agent.text_io import ShortcutPolicyDecision
+from agent.text_io import TyperTextIO
 
 
 class FakeTextIO:
@@ -121,6 +123,32 @@ class FakeTextIO:
 
 
 class InputEnvironmentTests(unittest.TestCase):
+    def test_typer_text_io_uses_focused_text_capture_adapter(self):
+        class FakeFocusedTextCapture:
+            def caret_window(self):
+                return FocusedTextWindow("光标附近", source="ax")
+
+            def full_focused_snapshot(self):
+                return CorrectionTextSnapshot("全文", source="focused_ax")
+
+            def screen_snapshot(self, expected_text: str = ""):
+                return CorrectionTextSnapshot(expected_text, source="screen_ocr")
+
+        text_io = TyperTextIO(focused_text_capture=FakeFocusedTextCapture())
+
+        self.assertEqual(
+            text_io.get_caret_text_window(),
+            CaretTextWindow("光标附近", source="ax"),
+        )
+        self.assertEqual(
+            text_io.get_full_focused_text_snapshot(),
+            CorrectionTextSnapshot("全文", source="focused_ax"),
+        )
+        self.assertEqual(
+            text_io.get_screen_text_snapshot("期望文本"),
+            CorrectionTextSnapshot("期望文本", source="screen_ocr"),
+        )
+
     def test_input_environment_can_use_text_io_adapter_without_patching_typer(self):
         buf = TextBuffer()
         text_io = FakeTextIO(selected="old")
@@ -388,6 +416,34 @@ class InputEnvironmentTests(unittest.TestCase):
             text_io.calls,
             [("get_selection",), ("get_caret_text_window",)],
         )
+
+    def test_text_revision_window_names_intent_for_tracked_segment(self):
+        buf = TextBuffer()
+        buf.push("last dictated output")
+        text_io = FakeTextIO()
+        text_io.caret_window = CaretTextWindow("whole input text", "caret_sentence")
+        env = TyperInputEnvironment(buf, text_io=text_io)
+
+        result = env.operation_window_for_text_revision()
+
+        self.assertTrue(result.ok)
+        self.assertIsNotNone(result.window)
+        self.assertEqual(result.window.text, "last dictated output")
+        self.assertEqual(result.window.source, "tracked_segment")
+
+    def test_whole_scope_window_names_intent_for_caret_text(self):
+        buf = TextBuffer()
+        buf.push("last dictated output")
+        text_io = FakeTextIO()
+        text_io.caret_window = CaretTextWindow("whole input text", "caret_sentence")
+        env = TyperInputEnvironment(buf, text_io=text_io)
+
+        result = env.operation_window_for_whole_scope()
+
+        self.assertTrue(result.ok)
+        self.assertIsNotNone(result.window)
+        self.assertEqual(result.window.text, "whole input text")
+        self.assertEqual(result.window.source, "caret")
 
     def test_operation_window_prefers_selection_over_caret_window(self):
         text_io = FakeTextIO(selected="selected")

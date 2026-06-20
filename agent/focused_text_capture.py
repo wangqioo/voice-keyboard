@@ -1,9 +1,15 @@
-"""Focused text capture diagnostics for the Voice Keyboard Engine."""
+"""Focused text capture diagnostics and adapter.
+
+This keeps Accessibility/OCR text-reading details behind a small seam so text
+I/O and instruction rules do not need to know where focused text came from.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Protocol
+
+from agent.correction_memory import CorrectionTextSnapshot
 
 
 CaptureConfidence = Literal["high", "medium", "low", "unsupported"]
@@ -88,3 +94,46 @@ def _format_probe_for_log(probe: FocusedTextProbe) -> str:
     state = "ok" if probe.ok else "no"
     detail = f"({probe.detail})" if probe.detail else ""
     return f"{probe.name}:{state}{detail}"
+
+
+@dataclass(frozen=True)
+class FocusedTextWindow:
+    text: str
+    source: str = "caret"
+
+
+class FocusedTextCapture(Protocol):
+    def caret_window(self) -> FocusedTextWindow | None:
+        ...
+
+    def full_focused_snapshot(self) -> CorrectionTextSnapshot:
+        ...
+
+    def screen_snapshot(self, expected_text: str = "") -> CorrectionTextSnapshot:
+        ...
+
+
+class TyperFocusedTextCapture:
+    """Focused text capture backed by the existing platform typer module."""
+
+    def caret_window(self) -> FocusedTextWindow | None:
+        from agent import typer
+
+        window = typer.get_caret_text_window()
+        if window is None:
+            return None
+        return FocusedTextWindow(text=window.text, source=window.source)
+
+    def full_focused_snapshot(self) -> CorrectionTextSnapshot:
+        from agent import typer
+
+        if hasattr(typer, "get_full_focused_text_snapshot"):
+            return typer.get_full_focused_text_snapshot()
+        return CorrectionTextSnapshot("", source="unsupported")
+
+    def screen_snapshot(self, expected_text: str = "") -> CorrectionTextSnapshot:
+        from agent import typer
+
+        if hasattr(typer, "get_screen_text_snapshot"):
+            return typer.get_screen_text_snapshot(expected_text)
+        return CorrectionTextSnapshot("", source="unsupported")

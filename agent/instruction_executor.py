@@ -1,12 +1,16 @@
 """Execution of typed Voice Text Operations for Instruction Mode."""
 
 from contextlib import nullcontext
-from dataclasses import replace
 import queue
 import threading
 from typing import Callable, ContextManager
 
-from agent.input_environment import OperationWindow, ReplacementPlan, TextTarget
+from agent.input_environment import (
+    OperationWindow,
+    OperationWindowLookupResult,
+    ReplacementPlan,
+    TextTarget,
+)
 from agent.local_operation_policy import apply_local_operation_policy
 from agent.punctuation import normalize_spoken_punctuation
 from agent.memo import MemoOperationResult, Memo
@@ -171,24 +175,12 @@ class InstructionModeExecutor:
         target: TextTarget | None = None,
     ) -> None:
         whole_scope = _is_whole_scope_edit_instruction(instruction)
-        window = self._operation_window_or_prompt(
-            "修改",
-            "编辑",
+        window = self._text_revision_window_or_prompt(
             target=target,
-            prefer_tracked_segment=not whole_scope,
+            whole_scope=whole_scope,
         )
         if window is None:
             return
-        if (
-            window.source == "caret"
-            and window.target.tracked_segment
-            and not whole_scope
-        ):
-            window = replace(
-                window,
-                text=window.target.tracked_segment,
-                source="tracked_segment",
-            )
         if window.source != "explicit_selection" and not whole_scope:
             if window.source == "tracked_segment":
                 print("[ai] 未框选内容，默认编辑最后一次输出")
@@ -318,14 +310,18 @@ class InstructionModeExecutor:
     def _do_delete(self, instruction: str, selected: str) -> None:
         whole_window_delete = _is_whole_window_delete_instruction(instruction)
         if whole_window_delete:
-            lookup = self._env.operation_window_for_instruction(prefer_tracked_segment=False)
+            lookup = self._env.operation_window_for_whole_scope()
+            if not isinstance(lookup, OperationWindowLookupResult):
+                lookup = self._env.operation_window_for_instruction(
+                    prefer_tracked_segment=False
+                )
             if not lookup.ok:
                 if not self._env.delete_all_text_by_shortcut():
                     self._show_failure("没有可删除的内容", f"delete_{lookup.failure}")
                 return
             window = lookup.window
         else:
-            window = self._operation_window_or_prompt("删除", "删除")
+            window = self._text_removal_window_or_prompt()
             if window is None:
                 return
             if window.source != "explicit_selection":
@@ -361,33 +357,97 @@ class InstructionModeExecutor:
         else:
             self._show_failure("没有可删除的内容", f"delete_{result.failure or 'failed'}")
 
-    def _operation_window_or_prompt(
+    def _text_revision_window_or_prompt(
         self,
-        action: str,
-        noun: str,
+        target: TextTarget | None = None,
+        whole_scope: bool = False,
+    ):
+        lookup = self._env.operation_window_for_text_revision(
+            target=target,
+            whole_scope=whole_scope,
+        )
+        if not isinstance(lookup, OperationWindowLookupResult):
+            lookup = self._operation_window_for_instruction_compat(
+                target=target,
+                prefer_tracked_segment=not whole_scope,
+            )
+        else:
+            lookup = self._prefer_tracked_segment_from_lookup(
+                lookup,
+                prefer_tracked_segment=not whole_scope,
+            )
+        if not lookup.ok:
+            self._show_failure("没有可编辑的内容", "修改_no_target")
+            return None
+        return lookup.window
+
+    def _text_removal_window_or_prompt(self):
+        lookup = self._env.operation_window_for_text_removal()
+        if not isinstance(lookup, OperationWindowLookupResult):
+            lookup = self._env.operation_window_for_instruction()
+        else:
+            lookup = self._prefer_tracked_segment_from_lookup(
+                lookup,
+                prefer_tracked_segment=True,
+            )
+        if not lookup.ok:
+            self._show_failure("没有可删除的内容", "删除_no_target")
+            return None
+        return lookup.window
+
+    def _operation_window_for_instruction_compat(
+        self,
         target: TextTarget | None = None,
         prefer_tracked_segment: bool = True,
-    ):
+    ) -> OperationWindowLookupResult:
         if prefer_tracked_segment:
             if target is not None and target.selected:
-                return OperationWindow(
-                    text=target.selected,
-                    target=target,
-                    source="explicit_selection",
+                return OperationWindowLookupResult.found(
+                    OperationWindow(
+                        text=target.selected,
+                        target=target,
+                        source="explicit_selection",
+                    )
                 )
             if target is not None and target.tracked_segment:
-                return OperationWindow(
-                    text=target.tracked_segment,
-                    target=target,
-                    source="tracked_segment",
+                return OperationWindowLookupResult.found(
+                    OperationWindow(
+                        text=target.tracked_segment,
+                        target=target,
+                        source="tracked_segment",
+                    )
                 )
         lookup = self._env.operation_window_for_instruction(
             prefer_tracked_segment=prefer_tracked_segment
         )
-        if not lookup.ok:
-            self._show_failure(f"没有可{noun}的内容", f"{action}_no_target")
-            return None
-        return lookup.window
+        if isinstance(lookup, OperationWindowLookupResult):
+            return self._prefer_tracked_segment_from_lookup(
+                lookup,
+                prefer_tracked_segment=prefer_tracked_segment,
+            )
+        return OperationWindowLookupResult.failed("no_target")
+
+    def _prefer_tracked_segment_from_lookup(
+        self,
+        lookup: OperationWindowLookupResult,
+        prefer_tracked_segment: bool,
+    ) -> OperationWindowLookupResult:
+        if not prefer_tracked_segment or not lookup.ok:
+            return lookup
+        window = lookup.window
+        if (
+            window is not None
+            and window.source != "explicit_selection"
+            and window.target.tracked_segment
+        ):
+            return OperationWindowLookupResult.found(
+                OperationWindow(
+                    text=window.target.tracked_segment,
+                    target=window.target,
+                    source="tracked_segment",
+                )
+            )
+        return lookup
 
     def _do_undo(self) -> None:
         policy = self._env.shortcut_policy_for_invocation("撤销")

@@ -44,6 +44,24 @@ class CapturePathTests(unittest.TestCase):
         self.assertEqual(calls[2].kwargs["target"], on_instruction)
         self.assertEqual(calls[2].kwargs["args"], (b"three",))
 
+    def test_push_to_talk_dispatch_prefers_event_sink(self):
+        on_event = MagicMock()
+        on_dictation = MagicMock()
+        ptt = PushToTalk(on_dictation, on_event=on_event)
+        event = UtteranceEvent.dictation(b"one", polish=True)
+
+        with patch("agent.push_to_talk.threading.Thread") as thread:
+            ptt._dispatch_utterance(event, "dict")
+
+        self.assertEqual(thread.call_args.kwargs["target"], on_event)
+        self.assertEqual(thread.call_args.kwargs["args"], (event,))
+        on_dictation.assert_not_called()
+
+    def test_event_sink_keeps_ai_hotkey_enabled(self):
+        ptt = PushToTalk(on_event=MagicMock(), ptt_key="a", ai_key="b")
+
+        self.assertEqual(len(ptt._ai_keys), 1)
+
     def test_toggle_key_disables_and_reenables_recording(self):
         on_dictation = MagicMock()
         ptt = PushToTalk(on_dictation, ptt_key="a", toggle_key="b")

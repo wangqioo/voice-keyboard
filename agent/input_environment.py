@@ -118,6 +118,61 @@ class TyperInputEnvironment:
             prefer_tracked_segment=prefer_tracked_segment
         )
 
+    def operation_window_for_text_revision(
+        self,
+        target: TextTarget | None = None,
+        *,
+        whole_scope: bool = False,
+    ) -> OperationWindowLookupResult:
+        if target is not None:
+            if target.selected:
+                return OperationWindowLookupResult.found(
+                    OperationWindow(
+                        text=target.selected,
+                        target=target,
+                        source="explicit_selection",
+                    )
+                )
+            if target.tracked_segment and not whole_scope:
+                return OperationWindowLookupResult.found(
+                    OperationWindow(
+                        text=target.tracked_segment,
+                        target=target,
+                        source="tracked_segment",
+                    )
+                )
+        lookup = self._operation_window_for_text_change(
+            prefer_tracked_segment=not whole_scope
+        )
+        if not lookup.ok or lookup.window is None:
+            return lookup
+        window = lookup.window
+        if (
+            window.source == "caret"
+            and window.target.tracked_segment
+            and not whole_scope
+        ):
+            return OperationWindowLookupResult.found(
+                OperationWindow(
+                    text=window.target.tracked_segment,
+                    target=window.target,
+                    source="tracked_segment",
+                )
+            )
+        return lookup
+
+    def operation_window_for_text_removal(
+        self,
+        *,
+        whole_scope: bool = False,
+    ) -> OperationWindowLookupResult:
+        return self._operation_window_for_text_change(
+            prefer_tracked_segment=not whole_scope
+        )
+
+    def operation_window_for_whole_scope(self) -> OperationWindowLookupResult:
+        return self._operation_window_for_text_change(prefer_tracked_segment=False)
+
     def insert_text(self, text: str) -> None:
         self._text_io.type_text(text)
         self._buf.push(text)

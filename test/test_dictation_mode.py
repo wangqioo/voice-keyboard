@@ -13,6 +13,19 @@ from agent.dictation_mode import (
 from agent.input_environment import TextInsertionResult
 
 
+class FakePerformance:
+    def __init__(self):
+        self.started = []
+        self.finished = []
+
+    def span(self, name: str, **fields):
+        self.started.append((name, fields))
+        return name
+
+    def finish(self, span, **fields):
+        self.finished.append((span, fields))
+
+
 class DictationModeModuleTests(unittest.TestCase):
     def make_module(self, stt_text="hello"):
         stt = MagicMock(spec=["transcribe"])
@@ -39,6 +52,28 @@ class DictationModeModuleTests(unittest.TestCase):
         history.append.assert_called_once_with("dictate", "hello", "ok", "")
         status.show_typing_message.assert_not_called()
         status.set_state.assert_called_once_with("idle")
+
+    def test_normal_dictation_reports_performance_spans(self):
+        module, _stt, _env, _status, _history = self.make_module("hello")
+        perf = FakePerformance()
+        module.performance = perf
+
+        module.handle_utterance(b"\0" * 32000)
+
+        self.assertEqual(
+            [name for name, _fields in perf.started],
+            [
+                "dictation.total",
+                "dictation.observe_previous",
+                "dictation.stt",
+                "dictation.correction",
+                "dictation.typing",
+            ],
+        )
+        finished = dict(perf.finished)
+        self.assertEqual(finished["dictation.stt"]["audio_seconds"], "1.00")
+        self.assertEqual(finished["dictation.typing"]["chars"], 5)
+        self.assertEqual(finished["dictation.total"]["status"], "ok")
 
     def test_normal_dictation_outputs_without_status_preview(self):
         stt = MagicMock(spec=["transcribe"])

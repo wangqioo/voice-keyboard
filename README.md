@@ -187,6 +187,32 @@ How the correction-memory loop works:
 
 Correction Memory is separate from Memo. Memo stores user-provided snippets for later recall; Correction Memory only stores local wrong-to-correct pairs for Dictation.
 
+## Dictation Runtime Chain
+
+Push-to-talk dictation uses this chain:
+
+```text
+hotkey capture -> STT -> optional polish -> Correction Memory -> Input Environment -> typing
+```
+
+Dictation still streams by utterance segments when VAD is available: holding the
+hotkey can emit completed speech segments before release. Final insertion uses
+the configured typing path; direct typing is fastest, while clipboard paste or
+fallback confirmation paths depend on the current focused app and permissions.
+
+The runtime prints `[perf]` timing lines for the main stages:
+
+- `dictation.stt`: speech provider latency.
+- `dictation.polish`: optional LLM polish latency.
+- `dictation.correction`: local dictionary application latency.
+- `dictation.typing`: time spent inserting text into the current app.
+- `dictation.total`: end-to-end utterance time, including focused-text observation.
+
+If dictation sometimes feels slow, compare these fields first. Provider/network
+latency shows up in `dictation.stt` or `dictation.polish`; app focus, paste, or
+Accessibility issues show up in `dictation.typing`; correction/OCR observation
+cost shows up around `dictation.observe_previous` and the correction logs.
+
 Secrets should stay out of git. Use `config.yaml`, `.env`, environment variables, or a local secret manager. The repository tracks only examples such as `config.yaml.example` and `.env.example`.
 
 ## Runtime Entry Points
