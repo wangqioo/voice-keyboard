@@ -163,7 +163,7 @@ def init(cfg: dict) -> None:
     global _use_clipboard_mode
     _use_clipboard_mode = cfg.get("method", "unicode") == "clip"
     if _use_clipboard_mode:
-        print("[typer] 直接打字模式（已禁用焦点检测和剪贴板粘贴）")
+        print("[typer] 剪贴板粘贴模式")
     _load_blocked_shortcuts(cfg)
     _load_custom_shortcuts(cfg.get("shortcuts", {}))
     _APP_SHORTCUTS.clear()
@@ -237,6 +237,9 @@ def _shortcuts_for_platform() -> dict[str, list]:
 def type_text(text: str) -> None:
     """在当前焦点输入框打出任意 Unicode 文字（含汉字）"""
     if not text:
+        return
+    if _use_clipboard_mode and _OS != "Windows":
+        replace_selection(text)
         return
     if _OS == "Darwin":
         _type_via_quartz(text)

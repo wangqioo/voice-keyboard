@@ -1099,10 +1099,22 @@ class TyperShortcutTests(unittest.TestCase):
         self.assertNotIn("新标签", names)
         self.assertNotIn("关闭标签", names)
 
-    def test_macos_clip_method_still_types_directly(self):
+    def test_macos_clip_method_pastes_text(self):
         with (
             patch.object(typer, "_OS", "Darwin"),
             patch.object(typer, "_use_clipboard_mode", True),
+            patch.object(typer, "replace_selection") as replace_selection,
+            patch.object(typer, "_type_via_quartz") as type_via_quartz,
+        ):
+            typer.type_text("hello")
+
+        replace_selection.assert_called_once_with("hello")
+        type_via_quartz.assert_not_called()
+
+    def test_macos_unicode_method_types_directly(self):
+        with (
+            patch.object(typer, "_OS", "Darwin"),
+            patch.object(typer, "_use_clipboard_mode", False),
             patch.object(typer, "replace_selection") as replace_selection,
             patch.object(typer, "_type_via_quartz") as type_via_quartz,
         ):
